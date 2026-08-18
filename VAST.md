@@ -51,6 +51,29 @@ python3 watch_multi.py --bind 0.0.0.0 --port 8768 --no-browser
 Otwórz w przeglądarce przez **Jupyter / Instance Portal → port 8768** albo tunel SSH.
 Pokazuje: łączne klucze, prędkość sumaryczną, pasek Puzzle #71, kartę per GPU.
 
+**Telegram — gdy znajdzie, wyśle adres + klucz:**
+
+1. Telegram → [@BotFather](https://t.me/BotFather) → `/newbot` → skopiuj token
+2. Napisz do swojego bota dowolną wiadomość
+3. Na vast:
+```bash
+curl -s "https://api.telegram.org/botTOKEN/getUpdates"
+```
+W JSON szukaj `"chat":{"id": 123456789}` — to jest `TELEGRAM_CHAT_ID`.
+
+4. Zapisz i przetestuj (osobny terminal, GPU zostaw w spokoju):
+```bash
+cd /workspace/puzzle71-cuda
+cat > telegram.env << 'EOF'
+TELEGRAM_BOT_TOKEN=123456:ABC...
+TELEGRAM_CHAT_ID=123456789
+EOF
+python3 telegram_notify.py --test
+python3 telegram_notify.py --watch
+```
+
+`--watch` czyta `logs/gpu*.log` — **nie trzeba przebudowywać** binarki, która już liczy.
+
 Stop:
 ```bash
 killall puzzle71-cuda

@@ -1,4 +1,6 @@
 bin/
+FOUND.txt
+telegram.env
 *.exe
 *.obj
 *.o

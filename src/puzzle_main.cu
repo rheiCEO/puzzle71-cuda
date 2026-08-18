@@ -526,7 +526,29 @@ static int run_search(_uint256 start_key, _uint256 end_key, Address target, uint
                     char pk[128], ah[64];
                     format_uint256_hex(k, pk, sizeof(pk));
                     format_address_hex(addr, ah, sizeof(ah));
-                    std::printf("\n*** ZNALEZIONO ***\nKlucz: %s\nHash160: %s\n", pk, ah);
+                    std::printf("\n*** ZNALEZIONO ***\nAdres: 1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU\nKlucz: %s\nHash160: %s\n", pk, ah);
+                    std::fflush(stdout);
+                    {
+                        FILE* ff = std::fopen("FOUND.txt", "w");
+                        if (ff) {
+                            std::fprintf(ff, "*** ZNALEZIONO ***\nAdres: 1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU\nKlucz: %s\nHash160: %s\n", pk, ah);
+                            std::fclose(ff);
+                        }
+                        FILE* lf = std::fopen("logs/FOUND.txt", "w");
+                        if (lf) {
+                            std::fprintf(lf, "*** ZNALEZIONO ***\nAdres: 1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU\nKlucz: %s\nHash160: %s\n", pk, ah);
+                            std::fclose(lf);
+                        }
+                        const char* tg_token = std::getenv("TELEGRAM_BOT_TOKEN");
+                        if (tg_token && tg_token[0]) {
+                            char cmd[1024];
+                            std::snprintf(cmd, sizeof(cmd),
+                                "python3 telegram_notify.py --send %s %s", pk, ah);
+                            int rc = std::system(cmd);
+                            if (rc != 0)
+                                std::fprintf(stderr, "WARN: telegram_notify.py kod %d\n", rc);
+                        }
+                    }
                     ret = 0;
                     goto cleanup;
                 }

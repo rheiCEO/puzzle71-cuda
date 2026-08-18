@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Puzzle #71 — postęp</title>
+<style>
+  :root {
+    --bg: #07080c;
+    --card: #12141c;
+    --line: #1e2330;
+    --text: #e8edf7;
+    --muted: #8b93a7;
+    --gold: #f5b942;
+    --orange: #ff8a3d;
+    --cyan: #3ee0c6;
+    --green: #5ee9a0;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    font-family: "Segoe UI", system-ui, sans-serif;
+    color: var(--text);
+    background:
+      radial-gradient(1200px 500px at 10% -10%, #1a1408 0%, transparent 50%),
+      radial-gradient(900px 400px at 100% 0%, #0b1a18 0%, transparent 45%),
+      var(--bg);
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 32px 20px 48px; }
+  .top { display: flex; justify-content: space-between; gap: 16px; align-items: flex-end; flex-wrap: wrap; }
+  h1 { margin: 0; font-size: 28px; letter-spacing: .04em; }
+  h1 span { color: var(--gold); }
+  .sub { color: var(--muted); margin-top: 6px; font-size: 14px; }
+  .live { display: flex; align-items: center; gap: 8px; color: var(--green); font-size: 13px; font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 12px var(--green); animation: pulse 1.4s infinite; }
+  .dot.off { background: #666; box-shadow: none; animation: none; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .hero {
+    margin-top: 22px;
+    background: linear-gradient(180deg, #161922, #10131a);
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    padding: 26px;
+    box-shadow: 0 20px 50px rgba(0,0,0,.35);
+  }
+  .keys { font-size: clamp(36px, 7vw, 64px); font-weight: 800; letter-spacing: -0.03em; }
+  .keys small { font-size: 18px; color: var(--muted); font-weight: 600; margin-left: 8px; }
+  .addr { margin-top: 8px; font-family: Consolas, ui-monospace, monospace; color: var(--gold); font-size: 14px; word-break: break-all; }
+  .tank {
+    margin-top: 22px;
+    height: 54px;
+    border-radius: 999px;
+    background: #0b0d12;
+    border: 1px solid #2a3142;
+    overflow: hidden;
+    position: relative;
+  }
+  .fill {
+    height: 100%;
+    width: 0%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #c47a12, var(--gold), #ffe08a);
+    box-shadow: 0 0 24px rgba(245,185,66,.45);
+    transition: width 1s cubic-bezier(.2,.8,.2,1);
+    position: relative;
+  }
+  .fill::after {
+    content: "";
+    position: absolute; inset: 0;
+    background: linear-gradient(180deg, rgba(255,255,255,.28), transparent 45%, rgba(0,0,0,.15));
+  }
+  .liquid {
+    position: absolute; inset: 0;
+    background:
+      repeating-linear-gradient(-55deg, transparent, transparent 12px, rgba(255,255,255,.07) 12px, rgba(255,255,255,.07) 24px);
+    animation: slide 8s linear infinite;
+  }
+  @keyframes slide { to { background-position: 120px 0; } }
+  .pct {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 15px; text-shadow: 0 1px 8px #000;
+    pointer-events: none;
+  }
+  .grid-title { margin: 28px 0 10px; color: var(--muted); font-size: 12px; letter-spacing: .12em; text-transform: uppercase; }
+  .cells { display: grid; grid-template-columns: repeat(32, 1fr); gap: 4px; }
+  .cell {
+    aspect-ratio: 1;
+    border-radius: 4px;
+    background: #1a1e28;
+    transition: background .4s, box-shadow .4s;
+  }
+  .cell.on { background: var(--gold); box-shadow: 0 0 8px rgba(245,185,66,.35); }
+  .cell.now { background: var(--cyan); box-shadow: 0 0 10px rgba(62,224,198,.5); }
+  .miles { display: grid; gap: 10px; margin-top: 8px; }
+  .mile { display: grid; grid-template-columns: 64px 1fr 90px; gap: 10px; align-items: center; }
+  .mile b { font-size: 13px; color: var(--cyan); }
+  .mb { height: 12px; background: #0b0d12; border: 1px solid var(--line); border-radius: 99px; overflow: hidden; }
+  .mb > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--cyan), #9fffe8); transition: width .9s ease; }
+  .mile span { text-align: right; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 22px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 14px 16px;
+  }
+  .card label { display: block; color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 6px; }
+  .card b { font-size: 18px; }
+  .mono { font-family: Consolas, ui-monospace, monospace; font-size: 12px; color: #c9d3e7; word-break: break-all; }
+  .wait { color: var(--muted); padding: 40px 0; text-align: center; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div>
+        <h1>Bitcoin Puzzle <span>#71</span></h1>
+        <div class="sub">Lokalny postęp z <code>puzzle71.progress</code></div>
+      </div>
+      <div class="live"><div class="dot" id="dot"></div><span id="live">oczekiwanie na plik…</span></div>
+    </div>
+
+    <div id="empty" class="wait">Uruchom SZUKAJ.bat albo WZNAWIJ.bat — tu pojawi się wypełnianie.</div>
+
+    <div id="app" hidden>
+      <div class="hero">
+        <div class="keys" id="keys">0<small>kluczy</small></div>
+        <div class="addr" id="addr">1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU</div>
+        <div class="tank">
+          <div class="fill" id="fill"><div class="liquid"></div></div>
+          <div class="pct" id="pct">0%</div>
+        </div>
+        <div class="grid-title">Bieżące okno (wypełnia się od lewej)</div>
+        <div class="cells" id="cells"></div>
+      </div>
+
+      <div class="grid-title">Kamienie milowe — widać ruch, zanim pasek puzzle ruszy</div>
+      <div class="miles" id="miles"></div>
+
+      <div class="cards">
+        <div class="card"><label>Prędkość</label><b id="speed">—</b></div>
+        <div class="card"><label>Tryb</label><b id="mode">—</b></div>
+        <div class="card"><label>Puzzle #71</label><b id="puzzle">—</b></div>
+        <div class="card"><label>Aktualizacja</label><b id="ago">—</b></div>
+      </div>
+      <div class="cards">
+        <div class="card"><label>base_key</label><div class="mono" id="base">—</div></div>
+        <div class="card"><label>zakres</label><div class="mono" id="range">—</div></div>
+      </div>
+    </div>
+  </div>
+<script>
+const CELLS = 96;
+const SPACE = Math.pow(2, 70);
+const milesEl = document.getElementById("cells");
+for (let i = 0; i < CELLS; i++) {
+  const d = document.createElement("div");
+  d.className = "cell";
+  milesEl.appendChild(d);
+}
+const MILES = [40, 44, 48, 52, 56, 60, 64, 70];
+const milesBox = document.getElementById("miles");
+MILES.forEach(n => {
+  const row = document.createElement("div");
+  row.className = "mile";
+  row.innerHTML = `<b>2^${n}</b><div class="mb"><i id="m${n}"></i></div><span id="mt${n}">0%</span>`;
+  milesBox.appendChild(row);
+});
+
+let prevKeys = null, prevAt = null;
+
+function fmtKeys(n) {
+  if (n >= 1e12) return (n / 1e12).toFixed(2) + " bln";
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + " mld";
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + " mln";
+  return n.toLocaleString("pl-PL");
+}
+function trimHex(h) {
+  h = (h || "").replace(/^0+/, "") || "0";
+  return h;
+}
+
+async function tick() {
+  try {
+    const r = await fetch("/api?" + Date.now());
+    const d = await r.json();
+    const live = document.getElementById("live");
+    const dot = document.getElementById("dot");
+    if (!d.ok) {
+      live.textContent = "brak puzzle71.progress";
+      live.style.color = "#8b93a7";
+      dot.classList.add("off");
+      document.getElementById("empty").hidden = false;
+      document.getElementById("app").hidden = true;
+      return;
+    }
+    document.getElementById("empty").hidden = true;
+    document.getElementById("app").hidden = false;
+    live.textContent = "czytam plik na żywo";
+    live.style.color = "";
+    dot.classList.remove("off");
+
+    const keys = d.total_keys || 0;
+    document.getElementById("keys").innerHTML = fmtKeys(keys) + "<small>kluczy</small>";
+    document.getElementById("addr").textContent = "1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU";
+
+    const puzzlePct = Math.min(100, (keys / SPACE) * 100);
+    const visualPct = Math.min(100, Math.max(0.8, Math.log10(keys + 1) / Math.log10(SPACE) * 100));
+    document.getElementById("fill").style.width = visualPct + "%";
+    document.getElementById("pct").textContent =
+      (puzzlePct < 0.0001 ? puzzlePct.toExponential(2) : puzzlePct.toFixed(6)) + "% całego Puzzle #71  ·  pasek logarytmiczny";
+
+    let windowBits = 40;
+    for (const n of MILES) if (keys >= Math.pow(2, n)) windowBits = Math.min(70, n + 4);
+    const win = Math.pow(2, windowBits);
+    const inWin = keys % win;
+    const cells = document.querySelectorAll(".cell");
+    const filled = Math.floor((inWin / win) * CELLS);
+    cells.forEach((c, i) => {
+      c.className = "cell" + (i < filled ? " on" : "") + (i === filled ? " now" : "");
+    });
+
+    MILES.forEach(n => {
+      const cap = Math.pow(2, n);
+      const p = Math.min(100, keys / cap * 100);
+      document.getElementById("m" + n).style.width = p + "%";
+      document.getElementById("mt" + n).textContent = p >= 100 ? "gotowe" : p.toFixed(p < 1 ? 3 : 1) + "%";
+    });
+
+    const now = Date.now();
+    if (prevKeys != null && now > prevAt) {
+      const speed = (keys - prevKeys) / ((now - prevAt) / 1000);
+      if (speed >= 0) document.getElementById("speed").textContent = fmtKeys(speed) + "/s";
+    }
+    prevKeys = keys;
+    prevAt = now;
+
+    document.getElementById("mode").textContent = d.mode || "—";
+    document.getElementById("puzzle").textContent = puzzlePct.toExponential(3) + "%";
+    document.getElementById("ago").textContent = d.age_sec + " s temu";
+    document.getElementById("base").textContent = trimHex(d.base_key);
+    document.getElementById("range").textContent = trimHex(d.start) + "  →  " + trimHex(d.end);
+  } catch (e) {
+    document.getElementById("live").textContent = "serwer WATCH nie odpowiada";
+    document.getElementById("dot").classList.add("off");
+  }
+}
+tick();
+setInterval(tick, 1000);
+</script>
+</body>
+</html>

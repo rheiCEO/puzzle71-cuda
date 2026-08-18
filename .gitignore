@@ -6,3 +6,8 @@ bin/
 *.lib
 *.pdb
 .vs/
+dist/
+*.progress
+run.log
+coop/coop.db
+logs/

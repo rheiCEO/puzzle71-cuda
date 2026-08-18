@@ -19,6 +19,11 @@
 #include "cpu_math.h"
 #include "cpu_curve_math.h"
 #include "cpu_btc_hash.h"
+#include "secure_rand.h"
+
+enum class SearchMode { Sequential, Random };
+
+#define DEFAULT_CHECKPOINT "puzzle71.progress"
 
 #define OUTPUT_BUFFER_SIZE 256
 #define BLOCK_SIZE 256U
@@ -179,6 +184,75 @@ static uint32_t read_work_scale(int argc, char** argv) {
     return 16;
 }
 
+
+static _uint256 random_base_in_range(_uint256 start, _uint256 end, _uint256 key_increment) {
+    if (gt_256(start, end)) return start;
+    _uint256 max_base;
+    if (gte_256(key_increment, end)) {
+        max_base = start;
+    } else {
+        max_base = cpu_sub_256(end, key_increment);
+        if (gt_256(start, max_base)) return start;
+    }
+    _uint256 span = cpu_sub_256(max_base, start);
+    if (eqeq_256(span, _uint256{0, 0, 0, 0, 0, 0, 0, 0})) return start;
+    _uint256 offset{};
+    if (generate_secure_random_key(offset, span, 72) != 0) return start;
+    return cpu_add_256(start, offset);
+}
+
+static bool save_checkpoint(const char* path, SearchMode mode,
+    const _uint256& start, const _uint256& end, const Address& target,
+    const _uint256& base_key, uint64_t total_keys) {
+    FILE* f = std::fopen(path, "w");
+    if (!f) return false;
+    char sh[128], eh[128], bh[128], th[64];
+    format_uint256_hex(start, sh, sizeof(sh));
+    format_uint256_hex(end, eh, sizeof(eh));
+    format_uint256_hex(base_key, bh, sizeof(bh));
+    format_address_hex(target, th, sizeof(th));
+    std::fprintf(f, "version=1\nmode=%s\nstart=%s\nend=%s\ntarget=%s\nbase_key=%s\ntotal_keys=%llu\n",
+        mode == SearchMode::Sequential ? "sequential" : "random",
+        sh, eh, th, bh, (unsigned long long)total_keys);
+    std::fclose(f);
+    return true;
+}
+
+static bool load_checkpoint(const char* path, SearchMode* mode_out,
+    _uint256* start_out, _uint256* end_out, Address* target_out,
+    _uint256* base_key_out, uint64_t* total_keys_out) {
+    FILE* f = std::fopen(path, "r");
+    if (!f) return false;
+    char line[512];
+    char mode_s[32] = "sequential";
+    char start_s[128] = {0}, end_s[128] = {0}, target_s[64] = {0}, base_s[128] = {0};
+    uint64_t total = 0;
+    while (std::fgets(line, sizeof(line), f)) {
+        if (std::strncmp(line, "mode=", 5) == 0) std::snprintf(mode_s, sizeof(mode_s), "%s", line + 5);
+        else if (std::strncmp(line, "start=", 6) == 0) std::snprintf(start_s, sizeof(start_s), "%s", line + 6);
+        else if (std::strncmp(line, "end=", 4) == 0) std::snprintf(end_s, sizeof(end_s), "%s", line + 4);
+        else if (std::strncmp(line, "target=", 7) == 0) std::snprintf(target_s, sizeof(target_s), "%s", line + 7);
+        else if (std::strncmp(line, "base_key=", 9) == 0) std::snprintf(base_s, sizeof(base_s), "%s", line + 9);
+        else if (std::strncmp(line, "total_keys=", 11) == 0) total = std::strtoull(line + 11, nullptr, 10);
+    }
+    std::fclose(f);
+    size_t n = std::strlen(mode_s);
+    while (n > 0 && (mode_s[n - 1] == '\n' || mode_s[n - 1] == '\r')) mode_s[--n] = '\0';
+    auto trimnl = [](char* s) {
+        size_t m = std::strlen(s);
+        while (m > 0 && (s[m - 1] == '\n' || s[m - 1] == '\r')) s[--m] = '\0';
+    };
+    trimnl(start_s); trimnl(end_s); trimnl(target_s); trimnl(base_s);
+    if (base_s[0] == '\0') return false;
+    if (mode_out) *mode_out = (std::strcmp(mode_s, "random") == 0) ? SearchMode::Random : SearchMode::Sequential;
+    if (start_out) *start_out = parse_hex_uint256(start_s);
+    if (end_out) *end_out = parse_hex_uint256(end_s);
+    if (target_out) *target_out = parse_hash160_hex(target_s);
+    if (base_key_out) *base_key_out = parse_hex_uint256(base_s);
+    if (total_keys_out) *total_keys_out = total;
+    return true;
+}
+
 static bool run_self_test() {
     Address g_addr = cpu_calculate_hash160_compressed(G_X, G_Y);
     static const uint8_t known_h160[20] = {
@@ -312,8 +386,36 @@ static int run_bench(double seconds, uint32_t work_scale) {
     return 0;
 }
 
-static int run_search(_uint256 start_key, _uint256 end_key, Address target, uint32_t work_scale) {
+static int run_search(_uint256 start_key, _uint256 end_key, Address target, uint32_t work_scale,
+    SearchMode mode, const char* checkpoint_path, bool resume) {
     CUDA_CHECK(cudaSetDevice(0));
+
+    uint64_t total_keys = 0;
+    _uint256 range_start = start_key;
+    _uint256 resume_base{};
+    bool have_resume_base = false;
+    if (resume) {
+        SearchMode saved_mode = SearchMode::Sequential;
+        _uint256 ck_start{}, ck_end{}, ck_base{};
+        Address ck_target{};
+        if (!load_checkpoint(checkpoint_path, &saved_mode, &ck_start, &ck_end, &ck_target, &ck_base, &total_keys)) {
+            std::fprintf(stderr, "BLAD: brak checkpointu '%s'\n", checkpoint_path);
+            return 1;
+        }
+        range_start = ck_start;
+        start_key = ck_start;
+        end_key = ck_end;
+        target = ck_target;
+        resume_base = ck_base;
+        have_resume_base = true;
+        mode = SearchMode::Sequential;
+        char bk[128], rs[128], re[128];
+        format_uint256_hex(ck_base, bk, sizeof(bk));
+        format_uint256_hex(range_start, rs, sizeof(rs));
+        format_uint256_hex(end_key, re, sizeof(re));
+        std::fprintf(stderr, "Resume: od base_key=%s, zakres %s..%s, lacznie=%llu kluczy\n",
+            bk, rs, re, (unsigned long long)total_keys);
+    }
 
     uint32_t target_words[5] = {target.a, target.b, target.c, target.d, target.e};
     CUDA_CHECK(cudaMemcpyToSymbol(device_target, target_words, sizeof(target_words)));
@@ -369,19 +471,29 @@ static int run_search(_uint256 start_key, _uint256 end_key, Address target, uint
     CUDA_CHECK(cudaMemcpy(block_offsets, block_offsets_host, grid_size * sizeof(CurvePoint), cudaMemcpyHostToDevice));
     delete[] block_offsets_host;
 
-    _uint256 base_key = start_key;
+    _uint256 base_key;
+    if (have_resume_base) {
+        base_key = resume_base;
+    } else if (mode == SearchMode::Random) {
+        base_key = random_base_in_range(range_start, end_key, key_increment);
+    } else {
+        base_key = start_key;
+    }
     _uint256 prev_base_key = base_key;
     bool first = true;
-    uint64_t total_keys = 0;
     uint64_t batch_start = ms_now();
     int ret = 0;
 
-    char target_hex[64];
+    char target_hex[64], rs[128], re[128];
     format_address_hex(target, target_hex, sizeof(target_hex));
-    std::fprintf(stderr, "GPU: skan %08x...%08x -> target hash160 %s\n",
-        start_key.a, start_key.h, target_hex);
+    format_uint256_hex(range_start, rs, sizeof(rs));
+    format_uint256_hex(end_key, re, sizeof(re));
+    std::fprintf(stderr, "GPU: tryb=%s, zakres %s..%s, target %s\n",
+        mode == SearchMode::Random ? "losowy" : "sekwencyjny", rs, re, target_hex);
+    if (mode == SearchMode::Sequential && !resume)
+        std::fprintf(stderr, "GPU: checkpoint -> %s (co batch)\n", checkpoint_path);
 
-    while (!gt_256(base_key, end_key)) {
+    while (mode == SearchMode::Random || !gt_256(base_key, end_key)) {
         if (!first) {
             gpu_address_work<<<grid_size, BLOCK_SIZE>>>(score_method, offsets);
             CUDA_CHECK(cudaDeviceSynchronize());
@@ -421,8 +533,14 @@ static int run_search(_uint256 start_key, _uint256 end_key, Address target, uint
             }
 
             prev_base_key = base_key;
-            base_key = cpu_add_256(base_key, key_increment);
-            if (gt_256(base_key, end_key)) break;
+            if (mode == SearchMode::Random) {
+                base_key = random_base_in_range(range_start, end_key, key_increment);
+            } else {
+                base_key = cpu_add_256(base_key, key_increment);
+                if (gt_256(base_key, end_key)) break;
+                if (!save_checkpoint(checkpoint_path, mode, range_start, end_key, target, base_key, total_keys))
+                    std::fprintf(stderr, "\nWARN: zapis checkpointu %s nieudany\n", checkpoint_path);
+            }
 
             output_counter_host[0] = 0;
             CUDA_CHECK(cudaMemcpyToSymbol(device_memory, device_memory_host, sizeof(uint64_t)));
@@ -454,11 +572,18 @@ static void print_usage() {
         "Uzycie:\n"
         "  puzzle71-cuda --test\n"
         "  puzzle71-cuda --bench [sekundy]\n"
-        "  puzzle71-cuda [--start HEX] [--end HEX] [--target HASH160_HEX]\n\n"
+        "  puzzle71-cuda [opcje]\n\n"
+        "Tryby szukania:\n"
+        "  --mode sequential   po kolei od --start (domyslnie), zapisuje checkpoint\n"
+        "  --mode random         losowo w zakresie --start .. --end\n"
+        "  --resume              kontynuuj sekwencyjnie od ostatniego checkpointu\n\n"
+        "Opcje:\n"
+        "  --start HEX  --end HEX  --target HASH160_HEX\n"
+        "  --checkpoint PLIK     domyslnie: puzzle71.progress\n"
+        "  --work-scale N        10-20, domyslnie 16\n\n"
         "Domyslnie Puzzle #71:\n"
         "  start=40000000000000000  end=7ffffffffffffffff\n"
         "  target=f6f5431d25bbf7b12e8add9af5e3475c44a0a5b8\n"
-        "  --work-scale 16  (env: PUZZLE71_WORK_SCALE)\n"
     );
 }
 
@@ -492,11 +617,27 @@ int main(int argc, char** argv) {
     const char* start_hex = "40000000000000000";
     const char* end_hex = "7ffffffffffffffff";
     const char* target_hex = "f6f5431d25bbf7b12e8add9af5e3475c44a0a5b8";
+    const char* checkpoint_path = DEFAULT_CHECKPOINT;
+    SearchMode mode = SearchMode::Sequential;
+    bool resume = false;
 
     for (int i = 1; i < argc; i++) {
         if (std::strcmp(argv[i], "--start") == 0 && i + 1 < argc) start_hex = argv[++i];
         else if (std::strcmp(argv[i], "--end") == 0 && i + 1 < argc) end_hex = argv[++i];
         else if (std::strcmp(argv[i], "--target") == 0 && i + 1 < argc) target_hex = argv[++i];
+        else if (std::strcmp(argv[i], "--checkpoint") == 0 && i + 1 < argc) checkpoint_path = argv[++i];
+        else if (std::strcmp(argv[i], "--resume") == 0) resume = true;
+        else if (std::strcmp(argv[i], "--mode") == 0 && i + 1 < argc) {
+            const char* m = argv[++i];
+            if (std::strcmp(m, "random") == 0) mode = SearchMode::Random;
+            else if (std::strcmp(m, "sequential") == 0) mode = SearchMode::Sequential;
+            else std::fprintf(stderr, "Nieznany tryb '%s' — uzywam sequential\n", m);
+        }
+    }
+
+    if (resume && mode == SearchMode::Random) {
+        std::fprintf(stderr, "UWAGA: --resume wymusza tryb sequential\n");
+        mode = SearchMode::Sequential;
     }
 
     if (!run_self_test()) return 1;
@@ -505,5 +646,6 @@ int main(int argc, char** argv) {
     _uint256 end = parse_hex_uint256(end_hex);
     Address target = parse_hash160_hex(target_hex);
 
-    return run_search(start, end, target, read_work_scale(argc, argv));
+    return run_search(start, end, target, read_work_scale(argc, argv),
+        mode, checkpoint_path, resume);
 }

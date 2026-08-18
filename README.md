@@ -31,6 +31,21 @@ build.bat
 bash scripts/build.sh
 ```
 
+## Tryby szukania
+
+| Tryb | Flaga | Opis |
+|------|-------|------|
+| Sekwencyjny | `--mode sequential` (domyślnie) | Po kolei od `--start`, zapisuje `puzzle71.progress` co batch |
+| Losowy w zakresie | `--mode random` | Losowy start batcha w `--start`…`--end`, w nieskończoność |
+| Wznowienie | `--resume` | Kontynuacja sekwencyjna od ostatniego checkpointu |
+
+```bat
+bin\puzzle71-cuda.exe --mode sequential
+bin\puzzle71-cuda.exe --mode random --start 40000000000000000 --end 7ffffffffffffffff
+bin\puzzle71-cuda.exe --resume
+bin\puzzle71-cuda.exe --checkpoint moj.postep --resume
+```
+
 ## Użycie
 
 ```bat

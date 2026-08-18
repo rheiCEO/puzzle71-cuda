@@ -1,0 +1,79 @@
+================================================================================
+  puzzle71-cuda — Bitcoin Puzzle #71 (GPU)
+  Wersja portable — NIE instaluj CUDA Toolkit
+================================================================================
+
+WYMAGANIA (u kolegi):
+  - Windows 10/11 (64-bit)
+  - Karta NVIDIA z CUDA (np. RTX 3080, 3090, 4070, 4090...)
+  - Aktualny sterownik NVIDIA (GeForce Game Ready / Studio)
+    Pobierz: https://www.nvidia.com/drivers  (jesli brak)
+
+NIE TRZEBA instalowac:
+  - CUDA Toolkit
+  - Visual Studio
+  - Python, itd.
+
+================================================================================
+JAK URUCHOMIC
+================================================================================
+
+  1. Rozpakuj caly folder np. na Pulpit
+  2. Kliknij 2x:  SZUKAJ.bat     — szukanie po kolei (zapisuje postep)
+  3. Albo:         WZNAWIJ.bat   — kontynuacja po przerwaniu
+  4. Albo:         LOSOWO.bat    — losowo w zakresie Puzzle #71
+
+Okno cmd pokaze predkosc (mln/s) i postep.
+
+================================================================================
+POSTEP / CHECKPOINT
+================================================================================
+
+  Plik: puzzle71.progress  (tworzy sie automatycznie)
+
+  base_key   = od jakiego klucza wznowi
+  total_keys = ile juz sprawdzono
+
+================================================================================
+CEL
+================================================================================
+
+  Adres:   1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU
+  Puzzle:  Bitcoin #71  (klucze 2^70 .. 2^71-1)
+
+  Przy trafieniu w oknie pojawi sie:
+    *** ZNALEZIONO ***
+    Klucz: ...
+    Hash160: ...
+
+================================================================================
+ROZWIAZYWANIE PROBLEMOW
+================================================================================
+
+  "Brak urzadzenia CUDA"
+    -> Zainstaluj / zaktualizuj sterownik NVIDIA, zrestartuj PC
+
+  "no kernel image is available"
+    -> Stara karta (sprzed GTX 10xx) — napisz do autora paczki
+
+  Antywirus blokuje .exe
+    -> Dodaj wyjatek dla folderu (exe jest skompilowany lokalnie, bez wirusa)
+
+================================================================================
+WSPOLPRACA 3+ GPU (ONLINE) — COOP
+================================================================================
+
+  Jeden ktos uruchamia serwer:
+    COOP-SERWER.bat   (LAN)
+    lub python coop\server.py na VPS / ngrok
+
+  Kazdy szukajacy:
+    COOP.bat http://IP_SERWERA:8765 TwojeImie
+
+  Postep wszystkich w przegladarce:
+    http://IP_SERWERA:8765/status
+
+  Serwer rozdaje rozne zakresy — bez dublowania pracy.
+  Szczegoly: COOP.md
+
+================================================================================

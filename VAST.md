@@ -43,6 +43,14 @@ bash scripts/run-all-gpus.sh
 tail -f logs/gpu0.log
 ```
 
+**Podgląd HTML — suma wszystkich GPU (jak WATCH.bat lokalnie):**
+```bash
+# w osobnym terminalu / tmux pane:
+python3 watch_multi.py --bind 0.0.0.0 --port 8768 --no-browser
+```
+Otwórz w przeglądarce przez **Jupyter / Instance Portal → port 8768** albo tunel SSH.
+Pokazuje: łączne klucze, prędkość sumaryczną, pasek Puzzle #71, kartę per GPU.
+
 Stop:
 ```bash
 killall puzzle71-cuda

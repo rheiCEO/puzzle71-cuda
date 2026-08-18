@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Puzzle #71 — multi-GPU</title>
+<style>
+  :root {
+    --bg: #07080c;
+    --card: #12141c;
+    --line: #1e2330;
+    --text: #e8edf7;
+    --muted: #8b93a7;
+    --gold: #f5b942;
+    --cyan: #3ee0c6;
+    --green: #5ee9a0;
+    --red: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    font-family: "Segoe UI", system-ui, sans-serif;
+    color: var(--text);
+    background:
+      radial-gradient(1200px 500px at 10% -10%, #1a1408 0%, transparent 50%),
+      radial-gradient(900px 400px at 100% 0%, #0b1a18 0%, transparent 45%),
+      var(--bg);
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 32px 20px 48px; }
+  .top { display: flex; justify-content: space-between; gap: 16px; align-items: flex-end; flex-wrap: wrap; }
+  h1 { margin: 0; font-size: 28px; letter-spacing: .04em; }
+  h1 span { color: var(--gold); }
+  .sub { color: var(--muted); margin-top: 6px; font-size: 14px; }
+  .live { display: flex; align-items: center; gap: 8px; color: var(--green); font-size: 13px; font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 12px var(--green); animation: pulse 1.4s infinite; }
+  .dot.off { background: #666; box-shadow: none; animation: none; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .hero {
+    margin-top: 22px;
+    background: linear-gradient(180deg, #161922, #10131a);
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    padding: 26px;
+    box-shadow: 0 20px 50px rgba(0,0,0,.35);
+  }
+  .keys { font-size: clamp(36px, 7vw, 64px); font-weight: 800; letter-spacing: -0.03em; }
+  .keys small { font-size: 18px; color: var(--muted); font-weight: 600; margin-left: 8px; }
+  .addr { margin-top: 8px; font-family: Consolas, ui-monospace, monospace; color: var(--gold); font-size: 14px; word-break: break-all; }
+  .tank {
+    margin-top: 22px;
+    height: 44px;
+    background: #0b0d12;
+    border: 1px solid var(--line);
+    border-radius: 99px;
+    overflow: hidden;
+    position: relative;
+  }
+  .fill { height: 100%; width: 0; transition: width .9s ease; position: relative; overflow: hidden; }
+  .liquid {
+    position: absolute; inset: 0;
+    background: linear-gradient(90deg, #c98a1a, var(--gold), #ffe08a);
+    box-shadow: inset 0 -8px 20px rgba(0,0,0,.25);
+  }
+  .pct {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 15px; text-shadow: 0 1px 8px #000;
+    pointer-events: none;
+  }
+  .grid-title { margin: 28px 0 10px; color: var(--muted); font-size: 12px; letter-spacing: .12em; text-transform: uppercase; }
+  .cells { display: grid; grid-template-columns: repeat(32, 1fr); gap: 4px; }
+  .cell {
+    aspect-ratio: 1;
+    border-radius: 4px;
+    background: #1a1e28;
+    transition: background .4s, box-shadow .4s;
+  }
+  .cell.on { background: var(--gold); box-shadow: 0 0 8px rgba(245,185,66,.35); }
+  .cell.now { background: var(--cyan); box-shadow: 0 0 10px rgba(62,224,198,.5); }
+  .miles { display: grid; gap: 10px; margin-top: 8px; }
+  .mile { display: grid; grid-template-columns: 64px 1fr 90px; gap: 10px; align-items: center; }
+  .mile b { font-size: 13px; color: var(--cyan); }
+  .mb { height: 12px; background: #0b0d12; border: 1px solid var(--line); border-radius: 99px; overflow: hidden; }
+  .mb > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--cyan), #9fffe8); transition: width .9s ease; }
+  .mile span { text-align: right; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 22px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 14px 16px;
+  }
+  .card label { display: block; color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 6px; }
+  .card b { font-size: 18px; }
+  .gpu-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 8px; }
+  .gpu {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 14px 16px;
+  }
+  .gpu-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .gpu-head b { color: var(--cyan); font-size: 15px; }
+  .gpu-head span { font-size: 11px; color: var(--muted); }
+  .gpu-bar { height: 10px; background: #0b0d12; border: 1px solid var(--line); border-radius: 99px; overflow: hidden; }
+  .gpu-bar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #2a8f7a, var(--cyan)); transition: width .9s ease; }
+  .gpu-meta { margin-top: 10px; display: grid; gap: 4px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .gpu-meta strong { color: var(--text); }
+  .gpu.stale { opacity: .55; border-color: #3a2020; }
+  .wait { color: var(--muted); padding: 40px 0; text-align: center; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div>
+        <h1>Bitcoin Puzzle <span>#71</span> — suma GPU</h1>
+        <div class="sub">Agregacja <code>logs/gpu*.progress</code></div>
+      </div>
+      <div class="live"><div class="dot" id="dot"></div><span id="live">oczekiwanie…</span></div>
+    </div>
+
+    <div id="empty" class="wait">Uruchom <code>bash scripts/run-all-gpus.sh</code> — tu pojawi się suma z wszystkich kart.</div>
+
+    <div id="app" hidden>
+      <div class="hero">
+        <div class="keys" id="keys">0<small>kluczy łącznie</small></div>
+        <div class="addr">1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU</div>
+        <div class="tank">
+          <div class="fill" id="fill"><div class="liquid"></div></div>
+          <div class="pct" id="pct">0%</div>
+        </div>
+        <div class="grid-title">Bieżące okno (suma — wypełnia się od lewej)</div>
+        <div class="cells" id="cells"></div>
+      </div>
+
+      <div class="grid-title">Karty GPU (<span id="gpuN">0</span> aktywnych)</div>
+      <div class="gpu-grid" id="gpus"></div>
+
+      <div class="grid-title">Kamienie milowe — łączny postęp</div>
+      <div class="miles" id="miles"></div>
+
+      <div class="cards">
+        <div class="card"><label>Prędkość łączna</label><b id="speed">—</b></div>
+        <div class="card"><label>GPU aktywne</label><b id="active">—</b></div>
+        <div class="card"><label>Puzzle #71</label><b id="puzzle">—</b></div>
+        <div class="card"><label>Ostatni zapis</label><b id="ago">—</b></div>
+      </div>
+    </div>
+  </div>
+<script>
+const CELLS = 96;
+const SPACE = Math.pow(2, 70);
+const MILES = [40, 44, 48, 52, 56, 60, 64, 70];
+
+const cellsEl = document.getElementById("cells");
+for (let i = 0; i < CELLS; i++) {
+  const d = document.createElement("div");
+  d.className = "cell";
+  cellsEl.appendChild(d);
+}
+const milesBox = document.getElementById("miles");
+MILES.forEach(n => {
+  const row = document.createElement("div");
+  row.className = "mile";
+  row.innerHTML = `<b>2^${n}</b><div class="mb"><i id="m${n}"></i></div><span id="mt${n}">0%</span>`;
+  milesBox.appendChild(row);
+});
+
+let prevKeys = null, prevAt = null;
+
+function fmtKeys(n) {
+  if (n >= 1e12) return (n / 1e12).toFixed(2) + " bln";
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + " mld";
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + " mln";
+  return n.toLocaleString("pl-PL");
+}
+function fmtPct(p) {
+  return p < 0.0001 ? p.toExponential(2) : p.toFixed(4);
+}
+
+function renderGpus(list) {
+  const box = document.getElementById("gpus");
+  box.innerHTML = "";
+  list.forEach(g => {
+    const el = document.createElement("div");
+    el.className = "gpu" + (g.age_sec > 120 ? " stale" : "");
+    el.innerHTML = `
+      <div class="gpu-head"><b>${g.gpu}</b><span>${g.age_sec}s temu</span></div>
+      <div class="gpu-bar"><i style="width:${Math.max(0.5, g.slice_done_pct)}%"></i></div>
+      <div class="gpu-meta">
+        <div><strong>${fmtKeys(g.total_keys)}</strong> kluczy · w swoim zakresie <strong>${fmtPct(g.slice_done_pct)}%</strong></div>
+        <div>Prędkość: <strong>${g.speed ? fmtKeys(g.speed) + "/s" : "—"}</strong></div>
+      </div>`;
+    box.appendChild(el);
+  });
+}
+
+async function tick() {
+  try {
+    const r = await fetch("/api?" + Date.now());
+    const d = await r.json();
+    const live = document.getElementById("live");
+    const dot = document.getElementById("dot");
+    if (!d.ok) {
+      live.textContent = "brak logs/gpu*.progress";
+      live.style.color = "#8b93a7";
+      dot.classList.add("off");
+      document.getElementById("empty").hidden = false;
+      document.getElementById("app").hidden = true;
+      return;
+    }
+    document.getElementById("empty").hidden = true;
+    document.getElementById("app").hidden = false;
+    live.textContent = d.gpu_count + " GPU · na żywo";
+    live.style.color = "";
+    dot.classList.remove("off");
+
+    const keys = d.total_keys || 0;
+    document.getElementById("keys").innerHTML = fmtKeys(keys) + "<small>kluczy łącznie</small>";
+    document.getElementById("gpuN").textContent = d.gpu_count;
+    document.getElementById("active").textContent = d.gpu_count + " / " + d.gpu_count;
+
+    const puzzlePct = Math.min(100, (keys / SPACE) * 100);
+    const visualPct = Math.min(100, Math.max(0.8, Math.log10(keys + 1) / Math.log10(SPACE) * 100));
+    document.getElementById("fill").style.width = visualPct + "%";
+    document.getElementById("pct").textContent =
+      fmtPct(puzzlePct) + "% całego Puzzle #71  ·  pasek logarytmiczny";
+
+    let windowBits = 40;
+    for (const n of MILES) if (keys >= Math.pow(2, n)) windowBits = Math.min(70, n + 4);
+    const win = Math.pow(2, windowBits);
+    const inWin = keys % win;
+    const cells = document.querySelectorAll(".cell");
+    const filled = Math.floor((inWin / win) * CELLS);
+    cells.forEach((c, i) => {
+      c.className = "cell" + (i < filled ? " on" : "") + (i === filled ? " now" : "");
+    });
+
+    MILES.forEach(n => {
+      const cap = Math.pow(2, n);
+      const p = Math.min(100, keys / cap * 100);
+      document.getElementById("m" + n).style.width = p + "%";
+      document.getElementById("mt" + n).textContent = p >= 100 ? "gotowe" : p.toFixed(p < 1 ? 3 : 1) + "%";
+    });
+
+    renderGpus(d.gpus || []);
+
+    const now = Date.now();
+    let speedText = "—";
+    if (d.speed_sum) {
+      speedText = fmtKeys(d.speed_sum) + "/s (z logów)";
+    } else if (prevKeys != null && now > prevAt) {
+      const speed = (keys - prevKeys) / ((now - prevAt) / 1000);
+      if (speed >= 0) speedText = fmtKeys(speed) + "/s";
+    }
+    document.getElementById("speed").textContent = speedText;
+    prevKeys = keys;
+    prevAt = now;
+
+    document.getElementById("puzzle").textContent = puzzlePct.toExponential(3) + "%";
+    document.getElementById("ago").textContent =
+      d.newest_sec != null ? "najświeższy " + d.newest_sec + " s temu" : "—";
+  } catch (e) {
+    document.getElementById("live").textContent = "serwer WATCH-MULTI nie odpowiada";
+    document.getElementById("dot").classList.add("off");
+  }
+}
+tick();
+setInterval(tick, 1000);
+</script>
+</body>
+</html>

@@ -20,6 +20,7 @@ fi
 
 echo "==> $N GPU — start (zakresy 1/$N Puzzle #71)"
 echo "    logi: $ROOT/logs/gpu*.log"
+echo "    podglad HTML:  python watch_multi.py --bind 0.0.0.0 --port 8768"
 echo "    stop:  killall puzzle71-cuda"
 echo
 

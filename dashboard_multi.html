@@ -108,6 +108,21 @@
   .gpu-meta strong { color: var(--text); }
   .gpu.stale { opacity: .55; border-color: #3a2020; }
   .wait { color: var(--muted); padding: 40px 0; text-align: center; }
+  .dl {
+    margin-top: 18px;
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+  }
+  .dl a {
+    display: inline-block;
+    background: #1a2430;
+    border: 1px solid var(--cyan);
+    color: var(--cyan);
+    text-decoration: none;
+    border-radius: 12px;
+    padding: 10px 14px;
+    font-weight: 700;
+    font-size: 13px;
+  }
 </style>
 </head>
 <body>
@@ -118,6 +133,11 @@
         <div class="sub">Agregacja <code>logs/gpu*.progress</code></div>
       </div>
       <div class="live"><div class="dot" id="dot"></div><span id="live">oczekiwanie…</span></div>
+    </div>
+
+    <div class="dl">
+      <a href="/download/progress.zip">Pobierz wszystkie .progress (ZIP)</a>
+      <span style="color:var(--muted);font-size:13px">ten sam tunel co dashboard — port 8768</span>
     </div>
 
     <div id="empty" class="wait">Uruchom <code>bash scripts/run-all-gpus.sh</code> — tu pojawi się suma z wszystkich kart.</div>
@@ -191,6 +211,7 @@ function renderGpus(list) {
       <div class="gpu-meta">
         <div><strong>${fmtKeys(g.total_keys)}</strong> kluczy · w swoim zakresie <strong>${fmtPct(g.slice_done_pct)}%</strong></div>
         <div>Prędkość: <strong>${g.speed ? fmtKeys(g.speed) + "/s" : "—"}</strong></div>
+        <div><a href="/file/${g.id}.progress" style="color:var(--cyan)">pobierz ${g.id}.progress</a></div>
       </div>`;
     box.appendChild(el);
   });

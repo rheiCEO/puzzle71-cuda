@@ -48,8 +48,14 @@ tail -f logs/gpu0.log
 # w osobnym terminalu / tmux pane:
 python3 watch_multi.py --bind 0.0.0.0 --port 8768 --no-browser
 ```
-Otwórz w przeglądarce przez **Jupyter / Instance Portal → port 8768** albo tunel SSH.
-Pokazuje: łączne klucze, prędkość sumaryczną, pasek Puzzle #71, kartę per GPU.
+Otwórz w przeglądarce przez **Instance Portal → Tunnels → Create new tunnel**:
+```
+http://localhost:8768
+```
+Na stronie jest przycisk **Pobierz wszystkie .progress (ZIP)** — albo:
+`https://<adres-tunelu>/download/progress.zip`
+
+Pokazuje: łączne klucze, prędkość, pasek Puzzle #71, karty GPU i pobieranie checkpointów.
 
 **Telegram — gdy znajdzie, wyśle adres + klucz:**
 

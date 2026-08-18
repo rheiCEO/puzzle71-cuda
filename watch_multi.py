@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import re
 import time
 import webbrowser
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parent
 HTML = ROOT / "dashboard_multi.html"
@@ -119,17 +122,44 @@ def collect(logs_dir: Path) -> dict:
     }
 
 
+SAFE_FILE = re.compile(r"^(gpu\d+\.(?:progress|log)|FOUND\.txt|puzzle71\.progress)$")
+
+
+def safe_log_file(logs_dir: Path, name: str) -> Path | None:
+    name = Path(unquote(name)).name
+    if not SAFE_FILE.match(name):
+        return None
+    path = (logs_dir / name).resolve()
+    if path.parent != logs_dir.resolve():
+        return None
+    return path if path.is_file() else None
+
+
+def zip_progress(logs_dir: Path) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for p in sorted(logs_dir.glob("gpu*.progress")):
+            zf.write(p, p.name)
+        found = logs_dir / "FOUND.txt"
+        if found.is_file():
+            zf.write(found, found.name)
+    return buf.getvalue()
+
+
 class Handler(BaseHTTPRequestHandler):
     logs_dir = DEFAULT_LOGS
 
     def log_message(self, *args):
         return
 
-    def _send(self, code: int, body: bytes, ctype: str) -> None:
+    def _send(self, code: int, body: bytes, ctype: str, extra: dict | None = None) -> None:
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Cache-Control", "no-store")
         self.send_header("Access-Control-Allow-Origin", "*")
+        if extra:
+            for k, v in extra.items():
+                self.send_header(k, v)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -140,6 +170,25 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, HTML.read_bytes(), "text/html; charset=utf-8")
         elif path == "/api":
             self._send(200, json.dumps(collect(self.logs_dir)).encode("utf-8"), "application/json")
+        elif path in ("/download/progress.zip", "/progress.zip"):
+            data = zip_progress(self.logs_dir)
+            self._send(
+                200,
+                data,
+                "application/zip",
+                {"Content-Disposition": "attachment; filename=\"puzzle71-progress.zip\""},
+            )
+        elif path.startswith("/file/"):
+            target = safe_log_file(self.logs_dir, path[6:])
+            if target is None:
+                self._send(404, b"not found", "text/plain")
+                return
+            self._send(
+                200,
+                target.read_bytes(),
+                "application/octet-stream",
+                {"Content-Disposition": f'attachment; filename="{target.name}"'},
+            )
         else:
             self._send(404, b"not found", "text/plain")
 
@@ -161,9 +210,10 @@ def main() -> None:
     url = f"http://{'127.0.0.1' if args.bind == '0.0.0.0' else args.bind}:{args.port}/"
     print(f"Dashboard multi-GPU: {url}")
     print(f"Logi:              {Handler.logs_dir}/gpu*.progress")
+    print(f"Pobierz ZIP:       {url}download/progress.zip")
     print("Odswiezanie co 1 s w przegladarce.")
     if args.bind == "0.0.0.0":
-        print("Na vast: otworz przez Jupyter / tunel portu", args.port)
+        print("Na vast Instance Portal: Create new tunnel -> http://localhost:%s" % args.port)
     if not args.no_browser and args.bind != "0.0.0.0":
         try:
             webbrowser.open(url)

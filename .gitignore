@@ -1,0 +1,8 @@
+bin/
+*.exe
+*.obj
+*.o
+*.exp
+*.lib
+*.pdb
+.vs/

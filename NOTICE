@@ -1,0 +1,6 @@
+puzzle71-cuda incorporates secp256k1 batch GPU code derived from eth-vanity-cuda
+Copyright (C) 2025 Manuel — licensed under GNU Affero General Public License v3.
+
+Bitcoin hash160 extensions Copyright (C) 2026 rheiCEO.
+
+See https://www.gnu.org/licenses/agpl-3.0.html

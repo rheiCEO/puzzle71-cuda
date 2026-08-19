@@ -19,7 +19,6 @@ DEFAULT_LOGS = ROOT / "logs"
 PORT = 8768
 PUZZLE_START = 1 << 70
 PUZZLE_END = (1 << 71) - 1
-MAP_BINS = 256
 
 SPEED_RE = re.compile(r"~(\d+)\s*M/s")
 
@@ -121,7 +120,7 @@ def merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
     return merged
 
 
-def build_coverage(gpus: list[dict]) -> tuple[int, list[float], int, int]:
+def build_coverage(gpus: list[dict]) -> tuple[int, list[tuple[int, int]], int, int]:
     # Pokrycie unikalne: suma przedzialow [start, base_key) z plikow progress.
     raw: list[tuple[int, int]] = []
     for g in gpus:
@@ -144,23 +143,7 @@ def build_coverage(gpus: list[dict]) -> tuple[int, list[float], int, int]:
 
     merged = merge_intervals(raw)
     covered = sum((e - s + 1) for s, e in merged)
-    total = PUZZLE_END - PUZZLE_START + 1
-    bin_size = max(1, total // MAP_BINS)
-    bins = [0.0] * MAP_BINS
-    for i in range(MAP_BINS):
-        bs = PUZZLE_START + i * bin_size
-        be = PUZZLE_END if i == MAP_BINS - 1 else bs + bin_size - 1
-        if bs > PUZZLE_END:
-            break
-        hit = 0
-        for s, e in merged:
-            if e < bs:
-                continue
-            if s > be:
-                break
-            hit += max(0, min(e, be) - max(s, bs) + 1)
-        bins[i] = hit / (be - bs + 1)
-    return covered, bins, PUZZLE_START, PUZZLE_END
+    return covered, merged, PUZZLE_START, PUZZLE_END
 
 
 def collect(logs_dir: Path) -> dict:
@@ -172,7 +155,7 @@ def collect(logs_dir: Path) -> dict:
 
     puzzle_space = 1 << 70
     puzzle_pct = min(100.0, total_keys / puzzle_space * 100) if puzzle_space else 0.0
-    covered_keys, coverage_bins, cov_start, cov_end = build_coverage(gpus)
+    covered_keys, coverage_segments, cov_start, cov_end = build_coverage(gpus)
     covered_pct = min(100.0, covered_keys / puzzle_space * 100) if puzzle_space else 0.0
 
     ages = [g["age_sec"] for g in gpus]
@@ -184,9 +167,9 @@ def collect(logs_dir: Path) -> dict:
         "covered_keys": covered_keys,
         "covered_pct": covered_pct,
         "remaining_keys": max(0, puzzle_space - covered_keys),
-        "coverage_bins": coverage_bins,
-        "coverage_start": cov_start,
-        "coverage_end": cov_end,
+        "coverage_segments": [{"start": f"{s:x}", "end": f"{e:x}"} for s, e in coverage_segments],
+        "coverage_start_hex": f"{cov_start:x}",
+        "coverage_end_hex": f"{cov_end:x}",
         "puzzle_pct": puzzle_pct,
         "puzzle_space": puzzle_space,
         "newest_sec": min(ages) if ages else None,

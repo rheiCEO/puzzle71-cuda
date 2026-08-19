@@ -77,15 +77,23 @@
   }
   .cell.on { background: var(--gold); box-shadow: 0 0 8px rgba(245,185,66,.35); }
   .cell.now { background: var(--cyan); box-shadow: 0 0 10px rgba(62,224,198,.5); }
-  .map { display: grid; grid-template-columns: repeat(32, 1fr); gap: 3px; margin-top: 8px; }
-  .map-cell {
-    aspect-ratio: 1;
-    border-radius: 3px;
+  .map-wrap { margin-top: 8px; position: relative; }
+  #mapCanvas {
+    width: 100%;
+    max-width: 760px;
+    image-rendering: pixelated;
+    border: 1px solid var(--line);
+    border-radius: 8px;
     background: #131722;
-    border: 1px solid #1e2330;
+    display: block;
   }
-  .map-cell.on { background: #5ee9a0; border-color: #6effb0; }
-  .map-cell.half { background: #2f7f6a; border-color: #3fa386; }
+  .map-tip {
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--muted);
+    font-family: Consolas, ui-monospace, monospace;
+    word-break: break-all;
+  }
   .legend { color: var(--muted); font-size: 12px; margin-top: 8px; }
   .miles { display: grid; gap: 10px; margin-top: 8px; }
   .mile { display: grid; grid-template-columns: 64px 1fr 90px; gap: 10px; align-items: center; }
@@ -167,9 +175,12 @@
       <div class="grid-title">Karty GPU (<span id="gpuN">0</span> aktywnych)</div>
       <div class="gpu-grid" id="gpus"></div>
 
-      <div class="grid-title">Mapa całego Puzzle #71 (unikalne pokrycie)</div>
-      <div class="map" id="map"></div>
-      <div class="legend">Każdy kwadrat = fragment całej przestrzeni. Zielone = już przeszukane, ciemne = jeszcze przed nami.</div>
+      <div class="grid-title">Mapa całego Puzzle #71 (1 kwadracik = 0.0001%)</div>
+      <div class="map-wrap">
+        <canvas id="mapCanvas" width="1000" height="1000"></canvas>
+      </div>
+      <div class="map-tip" id="mapTip">Najedź myszką na mapę, aby zobaczyć zakres danego kwadracika.</div>
+      <div class="legend">Zielone = przeszukane unikalnie, ciemne = jeszcze przed nami.</div>
 
       <div class="grid-title">Kamienie milowe — łączny postęp</div>
       <div class="miles" id="miles"></div>
@@ -186,7 +197,8 @@
   </div>
 <script>
 const CELLS = 96;
-const MAP_CELLS = 256;
+const MAP_SIDE = 1000;
+const MAP_CELLS = MAP_SIDE * MAP_SIDE;
 const SPACE = Math.pow(2, 70);
 const MILES = [40, 44, 48, 52, 56, 60, 64, 70];
 
@@ -203,12 +215,10 @@ MILES.forEach(n => {
   row.innerHTML = `<b>2^${n}</b><div class="mb"><i id="m${n}"></i></div><span id="mt${n}">0%</span>`;
   milesBox.appendChild(row);
 });
-const mapEl = document.getElementById("map");
-for (let i = 0; i < MAP_CELLS; i++) {
-  const d = document.createElement("div");
-  d.className = "map-cell";
-  mapEl.appendChild(d);
-}
+const mapCanvas = document.getElementById("mapCanvas");
+const mapCtx = mapCanvas.getContext("2d");
+const mapTip = document.getElementById("mapTip");
+let lastCoverage = null;
 
 let prevKeys = null, prevAt = null;
 
@@ -221,15 +231,29 @@ function fmtKeys(n) {
 function fmtPct(p) {
   return p < 0.0001 ? p.toExponential(2) : p.toFixed(4);
 }
-function renderCoverage(bins) {
-  const cells = document.querySelectorAll(".map-cell");
-  for (let i = 0; i < cells.length; i++) {
-    const v = bins && bins[i] ? bins[i] : 0;
-    let cls = "map-cell";
-    if (v >= 0.95) cls += " on";
-    else if (v >= 0.05) cls += " half";
-    cells[i].className = cls;
+function drawMap(segments, puzzleStart, puzzleEnd) {
+  mapCtx.fillStyle = "#131722";
+  mapCtx.fillRect(0, 0, MAP_SIDE, MAP_SIDE);
+  if (!segments || !segments.length) return;
+  const start = BigInt("0x" + puzzleStart);
+  const end = BigInt("0x" + puzzleEnd);
+  const total = end - start + 1n;
+  const cellSize = total / BigInt(MAP_CELLS);
+  mapCtx.fillStyle = "#5ee9a0";
+  for (const seg of segments) {
+    const s = BigInt("0x" + seg.start);
+    const e = BigInt("0x" + seg.end);
+    let i1 = Number(((s - start) * BigInt(MAP_CELLS)) / total);
+    let i2 = Number(((e - start) * BigInt(MAP_CELLS)) / total);
+    if (i1 < 0) i1 = 0;
+    if (i2 >= MAP_CELLS) i2 = MAP_CELLS - 1;
+    for (let i = i1; i <= i2; i++) {
+      const x = i % MAP_SIDE;
+      const y = Math.floor(i / MAP_SIDE);
+      mapCtx.fillRect(x, y, 1, 1);
+    }
   }
+  lastCoverage = { start, end, total, cellSize };
 }
 
 function renderGpus(list) {
@@ -299,7 +323,7 @@ async function tick() {
     });
 
     renderGpus(d.gpus || []);
-    renderCoverage(d.coverage_bins || []);
+    drawMap(d.coverage_segments || [], d.coverage_start_hex, d.coverage_end_hex);
 
     const now = Date.now();
     let speedText = "—";
@@ -326,6 +350,21 @@ async function tick() {
     document.getElementById("dot").classList.add("off");
   }
 }
+
+mapCanvas.addEventListener("mousemove", (ev) => {
+  if (!lastCoverage) return;
+  const rect = mapCanvas.getBoundingClientRect();
+  const rx = (ev.clientX - rect.left) / rect.width;
+  const ry = (ev.clientY - rect.top) / rect.height;
+  const x = Math.max(0, Math.min(MAP_SIDE - 1, Math.floor(rx * MAP_SIDE)));
+  const y = Math.max(0, Math.min(MAP_SIDE - 1, Math.floor(ry * MAP_SIDE)));
+  const idx = y * MAP_SIDE + x;
+  const s = lastCoverage.start + BigInt(idx) * lastCoverage.cellSize;
+  const e = idx === MAP_CELLS - 1
+    ? lastCoverage.end
+    : (lastCoverage.start + BigInt(idx + 1) * lastCoverage.cellSize - 1n);
+  mapTip.textContent = `Kwadrat #${idx + 1}/${MAP_CELLS}  |  zakres: ${s.toString(16)} .. ${e.toString(16)}`;
+});
 tick();
 setInterval(tick, 1000);
 </script>

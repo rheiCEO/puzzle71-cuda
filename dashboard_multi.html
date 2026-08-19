@@ -190,8 +190,8 @@
         <div class="card"><label>GPU aktywne</label><b id="active">—</b></div>
         <div class="card"><label>Puzzle #71</label><b id="puzzle">—</b></div>
         <div class="card"><label>Ostatni zapis</label><b id="ago">—</b></div>
-        <div class="card"><label>Przeszukane unikalnie</label><b id="covered">—</b></div>
-        <div class="card"><label>Zostało (unikalnie)</label><b id="remaining">—</b></div>
+        <div class="card"><label>Przeszukane (bieżący zakres)</label><b id="covered">—</b></div>
+        <div class="card"><label>Zostało (bieżący zakres)</label><b id="remaining">—</b></div>
       </div>
     </div>
   </div>
@@ -343,8 +343,8 @@ async function tick() {
     const coveredKeys = d.covered_keys || 0;
     const coveredPct = d.covered_pct || 0;
     const remain = d.remaining_keys || 0;
-    document.getElementById("covered").textContent = fmtKeys(coveredKeys) + " (" + fmtPct(coveredPct) + "%)";
-    document.getElementById("remaining").textContent = fmtKeys(remain);
+    document.getElementById("covered").textContent = fmtKeys(coveredKeys) + " (" + fmtPct(coveredPct) + "% zakresu)";
+    document.getElementById("remaining").textContent = fmtKeys(remain) + " (" + fmtPct(100 - coveredPct) + "% zakresu)";
   } catch (e) {
     document.getElementById("live").textContent = "serwer WATCH-MULTI nie odpowiada";
     document.getElementById("dot").classList.add("off");

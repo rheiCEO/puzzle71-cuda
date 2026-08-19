@@ -155,6 +155,26 @@ def build_coverage(gpus: list[dict]) -> tuple[int, list[tuple[int, int]], int, i
     return covered, merged, PUZZLE_START, PUZZLE_END
 
 
+def covered_in_range(segments: list[tuple[int, int]], rs: int, re: int) -> int:
+    total = 0
+    for s, e in segments:
+        a = max(s, rs)
+        b = min(e, re)
+        if a <= b:
+            total += b - a + 1
+    return total
+
+
+def clip_segments(segments: list[tuple[int, int]], rs: int, re: int) -> list[tuple[int, int]]:
+    out: list[tuple[int, int]] = []
+    for s, e in segments:
+        a = max(s, rs)
+        b = min(e, re)
+        if a <= b:
+            out.append((a, b))
+    return merge_intervals(out)
+
+
 def collect(logs_dir: Path) -> dict:
     files = sorted(logs_dir.glob("gpu*.progress"))
     gpus = [g for p in files if (g := gpu_entry(p)) is not None]
@@ -165,7 +185,11 @@ def collect(logs_dir: Path) -> dict:
     puzzle_space = 1 << 70
     puzzle_pct = min(100.0, total_keys / puzzle_space * 100) if puzzle_space else 0.0
     covered_keys, coverage_segments, cov_start, cov_end = build_coverage(gpus)
-    covered_pct = min(100.0, covered_keys / puzzle_space * 100) if puzzle_space else 0.0
+    focus_space = cov_end - cov_start + 1
+    covered_focus = covered_in_range(coverage_segments, cov_start, cov_end)
+    remaining_focus = max(0, focus_space - covered_focus)
+    covered_pct_focus = min(100.0, covered_focus / focus_space * 100) if focus_space else 0.0
+    map_segments = clip_segments(coverage_segments, cov_start, cov_end)
 
     ages = [g["age_sec"] for g in gpus]
     return {
@@ -173,10 +197,11 @@ def collect(logs_dir: Path) -> dict:
         "gpu_count": len(gpus),
         "total_keys": total_keys,
         "speed_sum": speed_sum or None,
-        "covered_keys": covered_keys,
-        "covered_pct": covered_pct,
-        "remaining_keys": max(0, puzzle_space - covered_keys),
-        "coverage_segments": [{"start": f"{s:x}", "end": f"{e:x}"} for s, e in coverage_segments],
+        "covered_keys": covered_focus,
+        "covered_pct": covered_pct_focus,
+        "remaining_keys": remaining_focus,
+        "focus_space": focus_space,
+        "coverage_segments": [{"start": f"{s:x}", "end": f"{e:x}"} for s, e in map_segments],
         "coverage_start_hex": f"{cov_start:x}",
         "coverage_end_hex": f"{cov_end:x}",
         "puzzle_pct": puzzle_pct,

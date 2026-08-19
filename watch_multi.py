@@ -143,6 +143,15 @@ def build_coverage(gpus: list[dict]) -> tuple[int, list[tuple[int, int]], int, i
 
     merged = merge_intervals(raw)
     covered = sum((e - s + 1) for s, e in merged)
+
+    # Zakres "focus" dla mapy: aktualnie skanowany obszar (min start .. max end).
+    starts = [g.get("start_i") for g in gpus if g.get("start_i") is not None]
+    ends = [g.get("end_i") for g in gpus if g.get("end_i") is not None]
+    if starts and ends:
+        focus_start = max(PUZZLE_START, min(starts))
+        focus_end = min(PUZZLE_END, max(ends))
+        if focus_start <= focus_end:
+            return covered, merged, focus_start, focus_end
     return covered, merged, PUZZLE_START, PUZZLE_END
 
 

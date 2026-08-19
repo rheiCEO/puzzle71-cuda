@@ -175,9 +175,9 @@
       <div class="grid-title">Karty GPU (<span id="gpuN">0</span> aktywnych)</div>
       <div class="gpu-grid" id="gpus"></div>
 
-      <div class="grid-title">Mapa całego Puzzle #71 (1 kwadracik = 0.0001%)</div>
+      <div class="grid-title">Mapa bieżącego zakresu (większe kwadraciki, szybciej się zapełnia)</div>
       <div class="map-wrap">
-        <canvas id="mapCanvas" width="1000" height="1000"></canvas>
+        <canvas id="mapCanvas" width="220" height="220"></canvas>
       </div>
       <div class="map-tip" id="mapTip">Najedź myszką na mapę, aby zobaczyć zakres danego kwadracika.</div>
       <div class="legend">Zielone = przeszukane unikalnie, ciemne = jeszcze przed nami.</div>
@@ -197,7 +197,7 @@
   </div>
 <script>
 const CELLS = 96;
-const MAP_SIDE = 1000;
+const MAP_SIDE = 220;
 const MAP_CELLS = MAP_SIDE * MAP_SIDE;
 const SPACE = Math.pow(2, 70);
 const MILES = [40, 44, 48, 52, 56, 60, 64, 70];

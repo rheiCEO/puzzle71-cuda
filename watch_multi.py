@@ -17,6 +17,9 @@ ROOT = Path(__file__).resolve().parent
 HTML = ROOT / "dashboard_multi.html"
 DEFAULT_LOGS = ROOT / "logs"
 PORT = 8768
+PUZZLE_START = 1 << 70
+PUZZLE_END = (1 << 71) - 1
+MAP_BINS = 256
 
 SPEED_RE = re.compile(r"~(\d+)\s*M/s")
 
@@ -64,12 +67,16 @@ def gpu_entry(progress: Path) -> dict | None:
 
     slice_keys = 0
     slice_done_pct = 0.0
+    start_i = None
+    end_i = None
+    base_i = None
     try:
         start_i = hex_int(start_h)
         end_i = hex_int(end_h)
+        base_i = hex_int(base_h) if base_h else None
         slice_keys = end_i - start_i + 1
-        if base_h:
-            pos = max(0, hex_int(base_h) - start_i)
+        if base_i is not None:
+            pos = max(0, base_i - start_i)
             slice_done_pct = min(100.0, pos / slice_keys * 100) if slice_keys else 0.0
         elif slice_keys:
             slice_done_pct = min(100.0, total_keys / slice_keys * 100)
@@ -88,6 +95,9 @@ def gpu_entry(progress: Path) -> dict | None:
         "start": start_h,
         "end": end_h,
         "base_key": base_h,
+        "start_i": start_i,
+        "end_i": end_i,
+        "base_i": base_i,
         "slice_keys": slice_keys,
         "slice_done_pct": round(slice_done_pct, 4),
         "speed": speed,
@@ -95,6 +105,62 @@ def gpu_entry(progress: Path) -> dict | None:
         "progress_file": str(progress),
         "log_file": str(log_path),
     }
+
+
+def merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    if not intervals:
+        return []
+    intervals.sort()
+    merged: list[tuple[int, int]] = [intervals[0]]
+    for s, e in intervals[1:]:
+        ps, pe = merged[-1]
+        if s <= pe + 1:
+            merged[-1] = (ps, max(pe, e))
+        else:
+            merged.append((s, e))
+    return merged
+
+
+def build_coverage(gpus: list[dict]) -> tuple[int, list[float], int, int]:
+    # Pokrycie unikalne: suma przedzialow [start, base_key) z plikow progress.
+    raw: list[tuple[int, int]] = []
+    for g in gpus:
+        s = g.get("start_i")
+        e = g.get("end_i")
+        b = g.get("base_i")
+        if s is None or e is None:
+            continue
+        if b is None:
+            b = s + int(g.get("total_keys", 0))
+        if b <= s:
+            continue
+        scan_end = min(e + 1, b) - 1
+        if scan_end < s:
+            continue
+        rs = max(PUZZLE_START, s)
+        re = min(PUZZLE_END, scan_end)
+        if rs <= re:
+            raw.append((rs, re))
+
+    merged = merge_intervals(raw)
+    covered = sum((e - s + 1) for s, e in merged)
+    total = PUZZLE_END - PUZZLE_START + 1
+    bin_size = max(1, total // MAP_BINS)
+    bins = [0.0] * MAP_BINS
+    for i in range(MAP_BINS):
+        bs = PUZZLE_START + i * bin_size
+        be = PUZZLE_END if i == MAP_BINS - 1 else bs + bin_size - 1
+        if bs > PUZZLE_END:
+            break
+        hit = 0
+        for s, e in merged:
+            if e < bs:
+                continue
+            if s > be:
+                break
+            hit += max(0, min(e, be) - max(s, bs) + 1)
+        bins[i] = hit / (be - bs + 1)
+    return covered, bins, PUZZLE_START, PUZZLE_END
 
 
 def collect(logs_dir: Path) -> dict:
@@ -106,6 +172,8 @@ def collect(logs_dir: Path) -> dict:
 
     puzzle_space = 1 << 70
     puzzle_pct = min(100.0, total_keys / puzzle_space * 100) if puzzle_space else 0.0
+    covered_keys, coverage_bins, cov_start, cov_end = build_coverage(gpus)
+    covered_pct = min(100.0, covered_keys / puzzle_space * 100) if puzzle_space else 0.0
 
     ages = [g["age_sec"] for g in gpus]
     return {
@@ -113,6 +181,12 @@ def collect(logs_dir: Path) -> dict:
         "gpu_count": len(gpus),
         "total_keys": total_keys,
         "speed_sum": speed_sum or None,
+        "covered_keys": covered_keys,
+        "covered_pct": covered_pct,
+        "remaining_keys": max(0, puzzle_space - covered_keys),
+        "coverage_bins": coverage_bins,
+        "coverage_start": cov_start,
+        "coverage_end": cov_end,
         "puzzle_pct": puzzle_pct,
         "puzzle_space": puzzle_space,
         "newest_sec": min(ages) if ages else None,

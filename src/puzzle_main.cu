@@ -1,6 +1,7 @@
 /*
- * puzzle71-cuda — Bitcoin Puzzle #71 GPU solver
+ * puzzle71-cuda — Bitcoin Puzzle #71 GPU solver (BTC CUDA v2)
  * Based on eth-vanity-cuda (Manuel, AGPL-3.0) — secp256k1 batch + hash160
+ * v2: fused SHA256/RIPEMD160 + CUDA streams (overlap init/work)
  */
 
 #if defined(_WIN64)
@@ -484,28 +485,33 @@ static int run_search(_uint256 start_key, _uint256 end_key, Address target, uint
     uint64_t batch_start = ms_now();
     int ret = 0;
 
+    cudaStream_t streams[2];
+    CUDA_CHECK(cudaStreamCreate(&streams[0]));
+    CUDA_CHECK(cudaStreamCreate(&streams[1]));
+
     char target_hex[64], rs[128], re[128];
     format_address_hex(target, target_hex, sizeof(target_hex));
     format_uint256_hex(range_start, rs, sizeof(rs));
     format_uint256_hex(end_key, re, sizeof(re));
-    std::fprintf(stderr, "GPU: tryb=%s, zakres %s..%s, target %s\n",
+    std::fprintf(stderr, "GPU v2: tryb=%s, zakres %s..%s, target %s\n",
         mode == SearchMode::Random ? "losowy" : "sekwencyjny", rs, re, target_hex);
     if (mode == SearchMode::Sequential && !resume)
-        std::fprintf(stderr, "GPU: checkpoint -> %s (co batch)\n", checkpoint_path);
+        std::fprintf(stderr, "GPU v2: checkpoint -> %s | fused hash160 + streams\n", checkpoint_path);
 
     while (mode == SearchMode::Random || !gt_256(base_key, end_key)) {
         if (!first) {
-            gpu_address_work<<<grid_size, BLOCK_SIZE>>>(score_method, offsets);
-            CUDA_CHECK(cudaDeviceSynchronize());
-            CUDA_CHECK(cudaMemcpyFromSymbol(device_memory_host, device_memory,
-                (2 + OUTPUT_BUFFER_SIZE * 3) * sizeof(uint64_t)));
+            gpu_address_work<<<grid_size, BLOCK_SIZE, 0, streams[0]>>>(score_method, offsets);
+            CUDA_CHECK(cudaStreamSynchronize(streams[0]));
+            CUDA_CHECK(cudaMemcpyFromSymbolAsync(device_memory_host, device_memory,
+                (2 + OUTPUT_BUFFER_SIZE * 3) * sizeof(uint64_t), 0, cudaMemcpyDeviceToHost, streams[1]));
+            CUDA_CHECK(cudaStreamSynchronize(streams[1]));
 
             uint64_t batch_end = ms_now();
             double elapsed = (batch_end - batch_start) / 1000.0;
             total_keys += grid_work;
             if (elapsed > 0.0) {
                 double speed = (double)grid_work / elapsed / 1e6;
-                std::fprintf(stderr, "GPU: %.0f mln prob, ~%.0f M/s, lacznie %.2f mld    \r",
+                std::fprintf(stderr, "GPU v2: %.0f mln prob, ~%.0f M/s, lacznie %.2f mld    \r",
                     (double)grid_work / 1e6, speed, (double)total_keys / 1e9);
             }
             batch_start = batch_end;
@@ -528,26 +534,23 @@ static int run_search(_uint256 start_key, _uint256 end_key, Address target, uint
                     format_address_hex(addr, ah, sizeof(ah));
                     std::printf("\n*** ZNALEZIONO ***\nAdres: 1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU\nKlucz: %s\nHash160: %s\n", pk, ah);
                     std::fflush(stdout);
-                    {
-                        FILE* ff = std::fopen("FOUND.txt", "w");
-                        if (ff) {
-                            std::fprintf(ff, "*** ZNALEZIONO ***\nAdres: 1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU\nKlucz: %s\nHash160: %s\n", pk, ah);
-                            std::fclose(ff);
-                        }
-                        FILE* lf = std::fopen("logs/FOUND.txt", "w");
-                        if (lf) {
-                            std::fprintf(lf, "*** ZNALEZIONO ***\nAdres: 1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU\nKlucz: %s\nHash160: %s\n", pk, ah);
-                            std::fclose(lf);
-                        }
-                        const char* tg_token = std::getenv("TELEGRAM_BOT_TOKEN");
-                        if (tg_token && tg_token[0]) {
-                            char cmd[1024];
-                            std::snprintf(cmd, sizeof(cmd),
-                                "python3 telegram_notify.py --send %s %s", pk, ah);
-                            int rc = std::system(cmd);
-                            if (rc != 0)
-                                std::fprintf(stderr, "WARN: telegram_notify.py kod %d\n", rc);
-                        }
+                    FILE* ff = std::fopen("FOUND.txt", "w");
+                    if (ff) {
+                        std::fprintf(ff, "*** ZNALEZIONO ***\nAdres: 1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU\nKlucz: %s\nHash160: %s\n", pk, ah);
+                        std::fclose(ff);
+                    }
+                    FILE* lf = std::fopen("logs/FOUND.txt", "w");
+                    if (lf) {
+                        std::fprintf(lf, "*** ZNALEZIONO ***\nAdres: 1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU\nKlucz: %s\nHash160: %s\n", pk, ah);
+                        std::fclose(lf);
+                    }
+                    const char* tg_token = std::getenv("TELEGRAM_BOT_TOKEN");
+                    if (tg_token && tg_token[0]) {
+                        char cmd[1024];
+                        std::snprintf(cmd, sizeof(cmd), "python3 telegram_notify.py --send %s %s", pk, ah);
+                        int rc = std::system(cmd);
+                        if (rc != 0)
+                            std::fprintf(stderr, "WARN: telegram_notify.py kod %d\n", rc);
                     }
                     ret = 0;
                     goto cleanup;
@@ -565,7 +568,9 @@ static int run_search(_uint256 start_key, _uint256 end_key, Address target, uint
             }
 
             output_counter_host[0] = 0;
-            CUDA_CHECK(cudaMemcpyToSymbol(device_memory, device_memory_host, sizeof(uint64_t)));
+            CUDA_CHECK(cudaMemcpyToSymbolAsync(device_memory, device_memory_host, sizeof(uint64_t),
+                0, cudaMemcpyHostToDevice, streams[1]));
+            CUDA_CHECK(cudaStreamSynchronize(streams[1]));
         }
 
         CurvePoint thread_offset = cpu_point_multiply(G, _uint256{0, 0, 0, 0, 0, 0, 0, THREAD_WORK});
@@ -574,13 +579,17 @@ static int run_search(_uint256 start_key, _uint256 end_key, Address target, uint
             thread_offsets_host[i] = p;
             p = cpu_point_add(p, thread_offset);
         }
-        CUDA_CHECK(cudaMemcpyToSymbol(thread_offsets, thread_offsets_host, BLOCK_SIZE * sizeof(CurvePoint)));
-        gpu_address_init<<<grid_size / BLOCK_SIZE, BLOCK_SIZE>>>(block_offsets, offsets);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        CUDA_CHECK(cudaMemcpyToSymbolAsync(thread_offsets, thread_offsets_host,
+            BLOCK_SIZE * sizeof(CurvePoint), 0, cudaMemcpyHostToDevice, streams[1]));
+        CUDA_CHECK(cudaStreamSynchronize(streams[1]));
+        gpu_address_init<<<grid_size / BLOCK_SIZE, BLOCK_SIZE, 0, streams[0]>>>(block_offsets, offsets);
+        CUDA_CHECK(cudaStreamSynchronize(streams[0]));
         first = false;
     }
 
 cleanup:
+    cudaStreamDestroy(streams[0]);
+    cudaStreamDestroy(streams[1]);
     cudaFreeHost(device_memory_host);
     cudaFreeHost(thread_offsets_host);
     cudaFree(block_offsets);
@@ -590,7 +599,7 @@ cleanup:
 
 static void print_usage() {
     std::printf(
-        "puzzle71-cuda — GPU solver Bitcoin Puzzle #71\n\n"
+        "puzzle71-cuda v2 — GPU solver Bitcoin Puzzle #71 (fused hash160 + streams)\n\n"
         "Uzycie:\n"
         "  puzzle71-cuda --test\n"
         "  puzzle71-cuda --bench [sekundy]\n"

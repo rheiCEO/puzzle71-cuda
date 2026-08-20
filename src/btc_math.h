@@ -1,4 +1,3 @@
-
 #pragma once
 #include "structures.h"
 #include "btc_hash.cuh"
@@ -27,13 +26,24 @@ __device__ __forceinline__ Address bytes20_to_address(const uint8_t b[20]) {
 }
 
 
+__device__ __forceinline__ Address ripemd_le_words_to_address(const uint32_t r[5]) {
+    /* RIPEMD LE words → Address (jak bytes20_to_address po zapisie LE) = bswap32 */
+    return Address{
+        __byte_perm(r[0], 0, 0x0123),
+        __byte_perm(r[1], 0, 0x0123),
+        __byte_perm(r[2], 0, 0x0123),
+        __byte_perm(r[3], 0, 0x0123),
+        __byte_perm(r[4], 0, 0x0123)
+    };
+}
+
+
+/* BTC CUDA v2 — fused hash160 bez buforów pub/sha/rmd */
 __device__ __forceinline__ Address calculate_hash160_compressed(_uint256 x, _uint256 y) {
-    uint8_t pub[33];
-    pub[0] = (y.h & 1) ? 0x03 : 0x02;
-    uint256_x_to_be32(x, pub + 1);
-    uint8_t sha[32];
-    device_sha256_33(pub, sha);
-    uint8_t rmd[20];
-    device_ripemd160_32(sha, rmd);
-    return bytes20_to_address(rmd);
+    uint32_t prefix = (y.h & 1u) ? 0x03u : 0x02u;
+    uint32_t sha[8];
+    device_sha256_compressed_x(x.a, x.b, x.c, x.d, x.e, x.f, x.g, x.h, prefix, sha);
+    uint32_t rmd[5];
+    device_ripemd160_sha256_words(sha, rmd);
+    return ripemd_le_words_to_address(rmd);
 }

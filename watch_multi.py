@@ -283,6 +283,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, HTML.read_bytes(), "text/html; charset=utf-8")
         elif path == "/api":
             self._send(200, json.dumps(collect(self.logs_dir)).encode("utf-8"), "application/json")
+        elif path == "/health":
+            self._send(200, b'{"ok":true}', "application/json")
         elif path in ("/download/progress.zip", "/progress.zip"):
             data = zip_progress(self.logs_dir)
             self._send(

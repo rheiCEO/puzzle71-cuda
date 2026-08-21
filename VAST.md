@@ -33,13 +33,26 @@ To robi:
 
 Token ustawiasz w `export` / `telegram.env` — **nie wrzucaj go do publicznego repo**.
 
-## 2. Tunel HTML
+## 2. HTML — Cloudflare (zalecane)
 
-Vast → **Instance Portal** → **Tunnels** → Create:
+`vast-start.sh` sam odpala tunel i **wysyła link na Telegram**.
+
+Ręcznie (jeśli dashboard już działa):
+```bash
+cd /workspace/puzzle71-cuda
+BACKGROUND=1 bash cloudflare-tunnel.sh
+cat logs/cloudflare.url
 ```
-http://localhost:8768
+
+Albo na żywo w terminalu (URL wypisze cloudflared):
+```bash
+bash cloudflare-tunnel.sh
 ```
-(nie Jupyter 8888)
+
+Bez Cloudflare (portal Vast):
+```
+Instance Portal → Tunnels → http://localhost:8768
+```
 
 ## 3. Podgląd w SSH
 
@@ -54,6 +67,7 @@ nvidia-smi
 killall puzzle71-cuda
 pkill -f watch_multi.py
 pkill -f telegram_notify.py
+pkill -f cloudflared
 ```
 
 ## 5. Samo Telegram (test)

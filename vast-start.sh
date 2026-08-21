@@ -58,20 +58,33 @@ else
 fi
 
 # GPU random
-chmod +x "$ROOT/scripts/"*.sh 2>/dev/null || true
+chmod +x "$ROOT/scripts/"*.sh "$ROOT/cloudflare-tunnel.sh" 2>/dev/null || true
 WORK_SCALE="$WORK_SCALE" bash "$ROOT/scripts/run-all-gpus-random.sh"
+
+# Cloudflare quick tunnel (publiczny URL) — jak przy ETH
+if [[ "${CLOUDFLARE:-1}" != "0" ]]; then
+  echo "==> Start Cloudflare tunnel..."
+  BACKGROUND=1 WATCH_PORT="$WATCH_PORT" bash "$ROOT/cloudflare-tunnel.sh" || true
+fi
+
+CF_URL=""
+if [[ -f "$ROOT/logs/cloudflare.url" ]]; then
+  CF_URL="$(cat "$ROOT/logs/cloudflare.url")"
+fi
 
 cat <<EOF
 
 GOTOWE.
-  Dashboard:  http://localhost:${WATCH_PORT}/
-  Vast tunel: Instance Portal -> Tunnels -> http://localhost:${WATCH_PORT}
+  Lokalnie:   http://127.0.0.1:${WATCH_PORT}/
+  Cloudflare: ${CF_URL:-'(jeszcze nie — tail -f logs/cloudflare.log)'}
 
   Log GPU0:   tail -f logs/gpu0.log
   Telegram:   tail -f logs/telegram.log
+  CF log:     tail -f logs/cloudflare.log
 
   Stop:       killall puzzle71-cuda
               pkill -f watch_multi.py
               pkill -f telegram_notify.py
+              pkill -f cloudflared
 
 EOF

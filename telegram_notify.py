@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Wyślij na Telegram gdy Puzzle #71 zostanie znaleziony. Nie wymaga przebudowy CUDA."""
+"""Telegram: HIT Puzzle #71 + postęp co N mld kluczy. Nie wymaga przebudowy CUDA."""
 from __future__ import annotations
 
 import argparse
@@ -20,9 +20,15 @@ FOUND_FILES = (ROOT / "FOUND.txt", DEFAULT_LOGS / "FOUND.txt")
 PUZZLE_ADDR = "1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU"
 B58 = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
+# 10000 mld = 10_000 * 10^9 = 10^13 kluczy
+PROGRESS_EVERY = int(os.environ.get("TELEGRAM_PROGRESS_EVERY_MLD", "10000")) * 1_000_000_000
+
 KEY_RE = re.compile(r"Klucz:\s*([0-9a-fA-F]+)")
 H160_RE = re.compile(r"Hash160:\s*([0-9a-fA-F]+)")
 HIT_RE = re.compile(r"\*\*\*\s*ZNALEZIONO\s*\*\*\*")
+SPEED_RE = re.compile(r"~(\d+(?:\.\d+)?)\s*M/s")
+TOTAL_MLD_RE = re.compile(r"lacznie\s+(\d+(?:\.\d+)?)\s*mld", re.I)
+TOTAL_KEYS_RE = re.compile(r"^total_keys=(\d+)", re.M)
 
 
 def load_dotenv(path: Path) -> None:
@@ -45,12 +51,7 @@ def creds() -> tuple[str, str]:
     if not token or not chat:
         raise SystemExit(
             "Brak TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID.\n"
-            "1) Telegram: @BotFather → /newbot → skopiuj token\n"
-            "2) Napisz do bota cokolwiek, potem:\n"
-            "   curl -s https://api.telegram.org/botTOKEN/getUpdates\n"
-            "   (chat.id z odpowiedzi = TELEGRAM_CHAT_ID)\n"
-            "3) export TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...\n"
-            "   albo zapisz w telegram.env"
+            "Zapisz w telegram.env albo export na vast."
         )
     return token, chat
 
@@ -97,7 +98,7 @@ def format_message(priv: str, hash160: str, source: str = "") -> str:
     addr = p2pkh(hash160) if hash160 else PUZZLE_ADDR
     wif = wif_compressed(priv) if priv else ""
     lines = [
-        "Puzzle #71 ZNALEZIONY",
+        "🚨 Puzzle #71 ZNALEZIONY",
         "",
         f"Adres: {addr}",
         f"Klucz (hex): {priv}",
@@ -147,8 +148,72 @@ def write_found(priv: str, hash160: str) -> None:
         path.write_text(msg + "\n", encoding="utf-8")
 
 
+def fmt_keys(n: int) -> str:
+    mld = n / 1e9
+    if mld >= 1000:
+        return f"{mld/1000:.2f} bln ({n:,} kluczy)".replace(",", " ")
+    return f"{mld:.2f} mld ({n:,} kluczy)".replace(",", " ")
+
+
+def sum_checked(logs_dir: Path) -> tuple[int, int | None]:
+    """Suma total_keys z progress + fallback z logow. Zwraca (keys, speed_sum_or_None)."""
+    total = 0
+    speed_sum = 0
+    seen_logs: set[Path] = set()
+    for prog in sorted(logs_dir.glob("gpu*.progress")):
+        try:
+            text = prog.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        m = TOTAL_KEYS_RE.search(text)
+        keys = int(m.group(1)) if m else 0
+        log = prog.with_suffix(".log")
+        seen_logs.add(log)
+        if log.is_file():
+            try:
+                with log.open("rb") as f:
+                    f.seek(0, 2)
+                    size = f.tell()
+                    f.seek(max(0, size - 65536))
+                    chunk = f.read().decode("utf-8", errors="ignore")
+                lm = TOTAL_MLD_RE.findall(chunk)
+                if lm:
+                    keys = max(keys, int(float(lm[-1]) * 1e9))
+                sm = SPEED_RE.findall(chunk)
+                if sm:
+                    speed_sum += int(float(sm[-1]) * 1_000_000)
+            except OSError:
+                pass
+        total += keys
+    # logi bez progress
+    for log in logs_dir.glob("gpu*.log"):
+        if log in seen_logs:
+            continue
+        try:
+            with log.open("rb") as f:
+                f.seek(0, 2)
+                size = f.tell()
+                f.seek(max(0, size - 65536))
+                chunk = f.read().decode("utf-8", errors="ignore")
+            lm = TOTAL_MLD_RE.findall(chunk)
+            if lm:
+                total += int(float(lm[-1]) * 1e9)
+            sm = SPEED_RE.findall(chunk)
+            if sm:
+                speed_sum += int(float(sm[-1]) * 1_000_000)
+        except OSError:
+            pass
+    return total, (speed_sum or None)
+
+
 def cmd_test() -> None:
-    telegram_send("puzzle71-cuda: test OK — Telegram dziala.")
+    telegram_send(
+        "🟢 puzzle71-cuda ONLINE\n\n"
+        "Szukanie losowe Puzzle #71\n"
+        "zakres: 4000… → 7fff…\n"
+        f"Alerty: HIT + co {PROGRESS_EVERY // 1_000_000_000} mld kluczy\n"
+        "— Telegram OK"
+    )
     print("Wyslano test na Telegram.")
 
 
@@ -161,10 +226,30 @@ def cmd_send(priv: str, hash160: str, source: str) -> None:
 def cmd_watch(logs_dir: Path) -> None:
     creds()
     logs_dir.mkdir(parents=True, exist_ok=True)
+    state_path = logs_dir / ".telegram_state.json"
     sent: set[str] = set()
+    last_milestone = 0
+    if state_path.is_file():
+        try:
+            st = json.loads(state_path.read_text(encoding="utf-8"))
+            sent = set(st.get("sent", []))
+            last_milestone = int(st.get("last_milestone", 0))
+        except (OSError, json.JSONDecodeError, ValueError, TypeError):
+            pass
+
     offsets: dict[Path, int] = {}
-    print(f"Czekam na ZNALEZIONO w {logs_dir}/gpu*.log  (Ctrl+C = stop)")
-    print("Szukanie GPU moze isc osobno — ten proces tylko nasluchuje.")
+    every_mld = PROGRESS_EVERY // 1_000_000_000
+    print(f"Telegram watch: {logs_dir}")
+    print(f"  HIT + progress co {every_mld} mld  (Ctrl+C = stop)")
+
+    def save_state() -> None:
+        try:
+            state_path.write_text(
+                json.dumps({"sent": sorted(sent), "last_milestone": last_milestone}),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
 
     while True:
         files = list(logs_dir.glob("gpu*.log")) + [p for p in FOUND_FILES if p.exists()]
@@ -197,14 +282,36 @@ def cmd_watch(logs_dir: Path) -> None:
                 cmd_send(priv, h160, path.name)
             except SystemExit as e:
                 print(e, file=sys.stderr)
-        time.sleep(1.0)
+            save_state()
+
+        total, speed = sum_checked(logs_dir)
+        if PROGRESS_EVERY > 0 and total >= last_milestone + PROGRESS_EVERY:
+            milestone = (total // PROGRESS_EVERY) * PROGRESS_EVERY
+            if milestone > last_milestone:
+                last_milestone = milestone
+                spd = f"\nPredkosc: ~{speed/1e6:.0f} M/s" if speed else ""
+                msg = (
+                    f"📊 Puzzle #71 — postęp\n\n"
+                    f"Sprawdzono: {fmt_keys(total)}\n"
+                    f"Kamień milowy: {milestone // 1_000_000_000} mld"
+                    f"{spd}\n"
+                    f"Tryb: losowy 4000…→7fff…"
+                )
+                try:
+                    telegram_send(msg)
+                    print(f"\nTelegram progress: {fmt_keys(total)}")
+                except SystemExit as e:
+                    print(e, file=sys.stderr)
+                save_state()
+
+        time.sleep(2.0)
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Telegram alert Puzzle #71")
     ap.add_argument("--test", action="store_true", help="wyslij wiadomosc testowa")
     ap.add_argument("--send", nargs=2, metavar=("KLUCZ", "HASH160"), help="wyslij konkretne trafienie")
-    ap.add_argument("--watch", action="store_true", help="sluchaj logs/gpu*.log")
+    ap.add_argument("--watch", action="store_true", help="sluchaj logs/ + progress")
     ap.add_argument("--logs", type=Path, default=DEFAULT_LOGS)
     args = ap.parse_args()
     if args.test:

@@ -1,7 +1,7 @@
 /*
  * puzzle71-cuda — Bitcoin Puzzle #71 GPU solver (BTC CUDA v2)
  * Based on eth-vanity-cuda (Manuel, AGPL-3.0) — secp256k1 batch + hash160
- * v2: fused SHA256/RIPEMD160 + CUDA streams (overlap init/work)
+ * v2/magic: fused hash160 + specialized puzzle kernel + ping-pong offsets
  */
 
 #if defined(_WIN64)
@@ -292,7 +292,10 @@ static int run_bench(double seconds, uint32_t work_scale) {
     uint32_t grid_size = 1U << work_scale;
     if (grid_size < 256) grid_size = 256;
     const uint64_t grid_work = (uint64_t)BLOCK_SIZE * (uint64_t)grid_size * (uint64_t)THREAD_WORK;
-    const int score_method = 0;
+
+    Address target = parse_hash160_hex("f6f5431d25bbf7b12e8add9af5e3475c44a0a5b8");
+    uint32_t target_words[5] = {target.a, target.b, target.c, target.d, target.e};
+    CUDA_CHECK(cudaMemcpyToSymbol(device_target, target_words, sizeof(target_words)));
 
     CurvePoint* block_offsets = nullptr;
     CurvePoint* offsets = nullptr;
@@ -349,7 +352,7 @@ static int run_bench(double seconds, uint32_t work_scale) {
         if (elapsed_bench >= seconds) break;
 
         if (!first) {
-            gpu_address_work<<<grid_size, BLOCK_SIZE>>>(score_method, offsets);
+            gpu_puzzle_work<<<grid_size, BLOCK_SIZE>>>(offsets);
             CUDA_CHECK(cudaDeviceSynchronize());
             uint64_t batch_end = ms_now();
             double elapsed = (batch_end - batch_start) / 1000.0;
@@ -377,7 +380,7 @@ static int run_bench(double seconds, uint32_t work_scale) {
     }
 
     double avg = speed_n > 0 ? speed_sum / speed_n : 0.0;
-    std::printf("Benchmark: work_scale=%u, grid=%u, ~%.0f mln kluczy/s (%.2f mld prob)\n",
+    std::printf("Benchmark MAGIC: work_scale=%u, grid=%u, ~%.0f mln kluczy/s (%.2f mld prob)\n",
         work_scale, grid_size, avg, (double)total / 1e9);
 
     cudaFreeHost(device_memory_host);
@@ -424,10 +427,8 @@ static int run_search(_uint256 start_key, _uint256 end_key, Address target, uint
     uint32_t grid_size = 1U << work_scale;
     if (grid_size < 256) grid_size = 256;
     const uint64_t grid_work = (uint64_t)BLOCK_SIZE * (uint64_t)grid_size * (uint64_t)THREAD_WORK;
-    const int score_method = 3;
 
     CurvePoint* block_offsets = nullptr;
-    CurvePoint* offsets = nullptr;
     CurvePoint* thread_offsets_host = nullptr;
     uint64_t* device_memory_host = nullptr;
 
@@ -444,7 +445,9 @@ static int run_search(_uint256 start_key, _uint256 end_key, Address target, uint
     CUDA_CHECK(cudaMemcpyToSymbol(device_memory, device_memory_host, 2 * sizeof(uint64_t)));
 
     CUDA_CHECK(cudaMalloc(&block_offsets, grid_size * sizeof(CurvePoint)));
-    CUDA_CHECK(cudaMalloc(&offsets, (uint64_t)grid_size * BLOCK_SIZE * sizeof(CurvePoint)));
+    CurvePoint* offsets[2] = {nullptr, nullptr};
+    CUDA_CHECK(cudaMalloc(&offsets[0], (uint64_t)grid_size * BLOCK_SIZE * sizeof(CurvePoint)));
+    CUDA_CHECK(cudaMalloc(&offsets[1], (uint64_t)grid_size * BLOCK_SIZE * sizeof(CurvePoint)));
     CUDA_CHECK(cudaHostAlloc(&thread_offsets_host, BLOCK_SIZE * sizeof(CurvePoint), cudaHostAllocDefault));
 
     _uint256 key_increment = cpu_mul_256_mod_p(
@@ -464,7 +467,7 @@ static int run_search(_uint256 start_key, _uint256 end_key, Address target, uint
     CurvePoint* block_offsets_host = new CurvePoint[grid_size];
     CurvePoint block_offset = cpu_point_multiply(G, _uint256{0, 0, 0, 0, 0, 0, 0, THREAD_WORK * BLOCK_SIZE});
     p = G;
-    std::fprintf(stderr, "GPU: work_scale=%u, init krzywej (%u punktow)...\n", work_scale, grid_size);
+    std::fprintf(stderr, "MAGIC: work_scale=%u, ping-pong buffers, init (%u)...\n", work_scale, grid_size);
     for (uint32_t i = 0; i < grid_size; i++) {
         block_offsets_host[i] = p;
         p = cpu_point_add(p, block_offset);
@@ -481,97 +484,193 @@ static int run_search(_uint256 start_key, _uint256 end_key, Address target, uint
         base_key = start_key;
     }
     _uint256 prev_base_key = base_key;
-    bool first = true;
+    _uint256 work_base_key = base_key;
+    int cur = 0;
+    bool have_work = false;
     uint64_t batch_start = ms_now();
     int ret = 0;
 
-    cudaStream_t streams[2];
-    CUDA_CHECK(cudaStreamCreate(&streams[0]));
-    CUDA_CHECK(cudaStreamCreate(&streams[1]));
+    cudaStream_t stream_work, stream_init;
+    CUDA_CHECK(cudaStreamCreate(&stream_work));
+    CUDA_CHECK(cudaStreamCreate(&stream_init));
 
     char target_hex[64], rs[128], re[128];
     format_address_hex(target, target_hex, sizeof(target_hex));
     format_uint256_hex(range_start, rs, sizeof(rs));
     format_uint256_hex(end_key, re, sizeof(re));
-    std::fprintf(stderr, "GPU v2: tryb=%s, zakres %s..%s, target %s\n",
+    std::fprintf(stderr, "MAGIC: tryb=%s | %s..%s | target %s\n",
         mode == SearchMode::Random ? "losowy" : "sekwencyjny", rs, re, target_hex);
     if (mode == SearchMode::Sequential && !resume)
-        std::fprintf(stderr, "GPU v2: checkpoint -> %s | fused hash160 + streams\n", checkpoint_path);
+        std::fprintf(stderr, "MAGIC: checkpoint %s | specialized kernel + dual buffer\n", checkpoint_path);
 
-    while (mode == SearchMode::Random || !gt_256(base_key, end_key)) {
-        if (!first) {
-            gpu_address_work<<<grid_size, BLOCK_SIZE, 0, streams[0]>>>(score_method, offsets);
-            CUDA_CHECK(cudaStreamSynchronize(streams[0]));
-            CUDA_CHECK(cudaMemcpyFromSymbolAsync(device_memory_host, device_memory,
-                (2 + OUTPUT_BUFFER_SIZE * 3) * sizeof(uint64_t), 0, cudaMemcpyDeviceToHost, streams[1]));
-            CUDA_CHECK(cudaStreamSynchronize(streams[1]));
-
-            uint64_t batch_end = ms_now();
-            double elapsed = (batch_end - batch_start) / 1000.0;
-            total_keys += grid_work;
-            if (elapsed > 0.0) {
-                double speed = (double)grid_work / elapsed / 1e6;
-                std::fprintf(stderr, "GPU v2: %.0f mln prob, ~%.0f M/s, lacznie %.2f mld    \r",
-                    (double)grid_work / 1e6, speed, (double)total_keys / 1e9);
-            }
-            batch_start = batch_end;
-
-            if (output_counter_host[0] > 0) {
-                uint32_t nout = (uint32_t)output_counter_host[0];
-                if (nout > OUTPUT_BUFFER_SIZE) nout = OUTPUT_BUFFER_SIZE;
-                for (uint32_t i = 0; i < nout; i++) {
-                    if (output_buffer2_host[i] <= 0) continue;
-                    uint64_t k_offset = output_buffer_host[i];
-                    _uint256 k = cpu_add_256(prev_base_key,
-                        cpu_add_256(_uint256{0, 0, 0, 0, 0, 0, 0, THREAD_WORK},
-                            _uint256{0, 0, 0, 0, 0, 0,
-                                (uint32_t)(k_offset >> 32), (uint32_t)(k_offset & 0xFFFFFFFF)}));
-                    CurvePoint cp = cpu_point_multiply(G, k);
-                    Address addr = cpu_calculate_hash160_compressed(cp.x, cp.y);
-                    if (!address_eq(addr, target)) continue;
-                    char pk[128], ah[64];
-                    format_uint256_hex(k, pk, sizeof(pk));
-                    format_address_hex(addr, ah, sizeof(ah));
-                    std::printf("\n*** ZNALEZIONO ***\nAdres: 1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU\nKlucz: %s\nHash160: %s\n", pk, ah);
-                    std::fflush(stdout);
-                    FILE* ff = std::fopen("FOUND.txt", "w");
-                    if (ff) {
-                        std::fprintf(ff, "*** ZNALEZIONO ***\nAdres: 1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU\nKlucz: %s\nHash160: %s\n", pk, ah);
-                        std::fclose(ff);
-                    }
-                    FILE* lf = std::fopen("logs/FOUND.txt", "w");
-                    if (lf) {
-                        std::fprintf(lf, "*** ZNALEZIONO ***\nAdres: 1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU\nKlucz: %s\nHash160: %s\n", pk, ah);
-                        std::fclose(lf);
-                    }
-                    const char* tg_token = std::getenv("TELEGRAM_BOT_TOKEN");
-                    if (tg_token && tg_token[0]) {
-                        char cmd[1024];
-                        std::snprintf(cmd, sizeof(cmd), "python3 telegram_notify.py --send %s %s", pk, ah);
-                        int rc = std::system(cmd);
-                        if (rc != 0)
-                            std::fprintf(stderr, "WARN: telegram_notify.py kod %d\n", rc);
-                    }
-                    ret = 0;
-                    goto cleanup;
-                }
-            }
-
-            prev_base_key = base_key;
-            if (mode == SearchMode::Random) {
-                base_key = random_base_in_range(range_start, end_key, key_increment);
-            } else {
-                base_key = cpu_add_256(base_key, key_increment);
-                if (gt_256(base_key, end_key)) break;
-                if (!save_checkpoint(checkpoint_path, mode, range_start, end_key, target, base_key, total_keys))
-                    std::fprintf(stderr, "\nWARN: zapis checkpointu %s nieudany\n", checkpoint_path);
-            }
-
-            output_counter_host[0] = 0;
-            CUDA_CHECK(cudaMemcpyToSymbolAsync(device_memory, device_memory_host, sizeof(uint64_t),
-                0, cudaMemcpyHostToDevice, streams[1]));
-            CUDA_CHECK(cudaStreamSynchronize(streams[1]));
+    auto fill_thread_offsets = [&](_uint256 bk) {
+        CurvePoint thread_offset = cpu_point_multiply(G, _uint256{0, 0, 0, 0, 0, 0, 0, THREAD_WORK});
+        CurvePoint pp = cpu_point_multiply(G, cpu_add_256(_uint256{0, 0, 0, 0, 0, 0, 0, THREAD_WORK - 1}, bk));
+        for (int i = 0; i < BLOCK_SIZE; i++) {
+            thread_offsets_host[i] = pp;
+            pp = cpu_point_add(pp, thread_offset);
         }
+    };
+
+    /* pierwszy init */
+    fill_thread_offsets(base_key);
+    CUDA_CHECK(cudaMemcpyToSymbol(thread_offsets, thread_offsets_host, BLOCK_SIZE * sizeof(CurvePoint)));
+    gpu_address_init<<<grid_size / BLOCK_SIZE, BLOCK_SIZE, 0, stream_init>>>(block_offsets, offsets[cur]);
+    CUDA_CHECK(cudaStreamSynchronize(stream_init));
+    work_base_key = base_key;
+    have_work = true;
+
+    while (have_work) {
+        gpu_puzzle_work<<<grid_size, BLOCK_SIZE, 0, stream_work>>>(offsets[cur]);
+
+        /* nastepny klucz + init do drugiego bufora ROWNIEGLE z work */
+        bool scheduled_next = false;
+        _uint256 next_key = base_key;
+        if (mode == SearchMode::Random) {
+            next_key = random_base_in_range(range_start, end_key, key_increment);
+            scheduled_next = true;
+        } else {
+            next_key = cpu_add_256(base_key, key_increment);
+            if (!gt_256(next_key, end_key)) scheduled_next = true;
+        }
+
+        if (scheduled_next) {
+            fill_thread_offsets(next_key);
+            CUDA_CHECK(cudaMemcpyToSymbolAsync(thread_offsets, thread_offsets_host,
+                BLOCK_SIZE * sizeof(CurvePoint), 0, cudaMemcpyHostToDevice, stream_init));
+            gpu_address_init<<<grid_size / BLOCK_SIZE, BLOCK_SIZE, 0, stream_init>>>(
+                block_offsets, offsets[1 - cur]);
+        }
+
+        CUDA_CHECK(cudaStreamSynchronize(stream_work));
+        CUDA_CHECK(cudaMemcpyFromSymbolAsync(device_memory_host, device_memory,
+            (2 + OUTPUT_BUFFER_SIZE * 3) * sizeof(uint64_t), 0, cudaMemcpyDeviceToHost, stream_init));
+        CUDA_CHECK(cudaStreamSynchronize(stream_init));
+
+        uint64_t batch_end = ms_now();
+        double elapsed = (batch_end - batch_start) / 1000.0;
+        total_keys += grid_work;
+        if (elapsed > 0.0) {
+            double speed = (double)grid_work / elapsed / 1e6;
+            std::fprintf(stderr, "MAGIC: %.0f mln | ~%.0f M/s | lacznie %.2f mld    \r",
+                (double)grid_work / 1e6, speed, (double)total_keys / 1e9);
+        }
+        batch_start = batch_end;
+
+        prev_base_key = work_base_key;
+        if (output_counter_host[0] > 0) {
+            uint32_t nout = (uint32_t)output_counter_host[0];
+            if (nout > OUTPUT_BUFFER_SIZE) nout = OUTPUT_BUFFER_SIZE;
+            for (uint32_t i = 0; i < nout; i++) {
+                if (output_buffer2_host[i] <= 0) continue;
+                uint64_t k_offset = output_buffer_host[i];
+                _uint256 k = cpu_add_256(prev_base_key,
+                    cpu_add_256(_uint256{0, 0, 0, 0, 0, 0, 0, THREAD_WORK},
+                        _uint256{0, 0, 0, 0, 0, 0,
+                            (uint32_t)(k_offset >> 32), (uint32_t)(k_offset & 0xFFFFFFFF)}));
+                CurvePoint cp = cpu_point_multiply(G, k);
+                Address addr = cpu_calculate_hash160_compressed(cp.x, cp.y);
+                if (!address_eq(addr, target)) continue;
+                char pk[128], ah[64];
+                format_uint256_hex(k, pk, sizeof(pk));
+                format_address_hex(addr, ah, sizeof(ah));
+                std::printf("\n*** ZNALEZIONO ***\nAdres: 1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU\nKlucz: %s\nHash160: %s\n", pk, ah);
+                std::fflush(stdout);
+                FILE* ff = std::fopen("FOUND.txt", "w");
+                if (ff) {
+                    std::fprintf(ff, "*** ZNALEZIONO ***\nAdres: 1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU\nKlucz: %s\nHash160: %s\n", pk, ah);
+                    std::fclose(ff);
+                }
+                FILE* lf = std::fopen("logs/FOUND.txt", "w");
+                if (lf) {
+                    std::fprintf(lf, "*** ZNALEZIONO ***\nAdres: 1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU\nKlucz: %s\nHash160: %s\n", pk, ah);
+                    std::fclose(lf);
+                }
+                ret = 0;
+                goto cleanup;
+            }
+        }
+
+        output_counter_host[0] = 0;
+        CUDA_CHECK(cudaMemcpyToSymbolAsync(device_memory, device_memory_host, sizeof(uint64_t),
+            0, cudaMemcpyHostToDevice, stream_init));
+        CUDA_CHECK(cudaStreamSynchronize(stream_init));
+
+        if (!scheduled_next) break;
+
+        /* random tez zapisuje — HTML / Telegram widza total_keys */
+        if (!save_checkpoint(checkpoint_path, mode, range_start, end_key, target, next_key, total_keys))
+            std::fprintf(stderr, "\nWARN: checkpoint %s\n", checkpoint_path);
+
+        base_key = next_key;
+        work_base_key = next_key;
+        cur = 1 - cur;
+        have_work = true;
+    }
+
+cleanup:
+    cudaStreamDestroy(stream_work);
+    cudaStreamDestroy(stream_init);
+    cudaFreeHost(device_memory_host);
+    cudaFreeHost(thread_offsets_host);
+    cudaFree(block_offsets);
+    cudaFree(offsets[0]);
+    cudaFree(offsets[1]);
+    return ret;
+}
+
+static int run_magic_auto() {
+    std::printf("\n*** MAGIC AUTO-TUNE ***\nSzukam najlepszego work-scale na Twojej karcie...\n\n");
+    uint32_t best_scale = 16;
+    double best_speed = 0.0;
+    for (uint32_t s = 14; s <= 18; s++) {
+        std::printf("--- work_scale=%u ---\n", s);
+        /* krotki bench; run_bench drukuje wynik — zlap z ponownego wewnetrznego */
+        CUDA_CHECK(cudaSetDevice(0));
+        /* uzyj run_bench i porownaj przez stderr timing — prościej: osobna funkcja */
+        uint32_t grid_size = 1U << s;
+        if (grid_size < 256) grid_size = 256;
+        const uint64_t grid_work = (uint64_t)BLOCK_SIZE * (uint64_t)grid_size * (uint64_t)THREAD_WORK;
+
+        Address target = parse_hash160_hex("f6f5431d25bbf7b12e8add9af5e3475c44a0a5b8");
+        uint32_t tw[5] = {target.a, target.b, target.c, target.d, target.e};
+        CUDA_CHECK(cudaMemcpyToSymbol(device_target, tw, sizeof(tw)));
+
+        CurvePoint* block_offsets = nullptr;
+        CurvePoint* offsets = nullptr;
+        CurvePoint* thread_offsets_host = nullptr;
+        uint64_t* device_memory_host = nullptr;
+        CUDA_CHECK(cudaHostAlloc(&device_memory_host, (2 + OUTPUT_BUFFER_SIZE * 3) * sizeof(uint64_t), cudaHostAllocDefault));
+        device_memory_host[0] = 0;
+        device_memory_host[1] = 1;
+        CUDA_CHECK(cudaMemcpyToSymbol(device_memory, device_memory_host, 2 * sizeof(uint64_t)));
+        CUDA_CHECK(cudaMalloc(&block_offsets, grid_size * sizeof(CurvePoint)));
+        CUDA_CHECK(cudaMalloc(&offsets, (uint64_t)grid_size * BLOCK_SIZE * sizeof(CurvePoint)));
+        CUDA_CHECK(cudaHostAlloc(&thread_offsets_host, BLOCK_SIZE * sizeof(CurvePoint), cudaHostAllocDefault));
+
+        CurvePoint* addends_host = new CurvePoint[THREAD_WORK - 1];
+        CurvePoint p = G;
+        for (int i = 0; i < THREAD_WORK - 1; i++) {
+            addends_host[i] = p;
+            p = cpu_point_add(p, G);
+        }
+        CUDA_CHECK(cudaMemcpyToSymbol(addends, addends_host, (THREAD_WORK - 1) * sizeof(CurvePoint)));
+        delete[] addends_host;
+
+        _uint256 base_key = parse_hex_uint256("40000000000000000");
+        _uint256 key_increment = cpu_mul_256_mod_p(
+            cpu_mul_256_mod_p(_uint256{0, 0, 0, 0, 0, 0, 0, THREAD_WORK},
+                              _uint256{0, 0, 0, 0, 0, 0, 0, BLOCK_SIZE}),
+            _uint256{0, 0, 0, 0, 0, 0, 0, grid_size});
+        CurvePoint* block_offsets_host = new CurvePoint[grid_size];
+        CurvePoint block_offset = cpu_point_multiply(G, _uint256{0, 0, 0, 0, 0, 0, 0, THREAD_WORK * BLOCK_SIZE});
+        p = G;
+        for (uint32_t i = 0; i < grid_size; i++) {
+            block_offsets_host[i] = p;
+            p = cpu_point_add(p, block_offset);
+        }
+        CUDA_CHECK(cudaMemcpy(block_offsets, block_offsets_host, grid_size * sizeof(CurvePoint), cudaMemcpyHostToDevice));
+        delete[] block_offsets_host;
 
         CurvePoint thread_offset = cpu_point_multiply(G, _uint256{0, 0, 0, 0, 0, 0, 0, THREAD_WORK});
         p = cpu_point_multiply(G, cpu_add_256(_uint256{0, 0, 0, 0, 0, 0, 0, THREAD_WORK - 1}, base_key));
@@ -579,30 +678,49 @@ static int run_search(_uint256 start_key, _uint256 end_key, Address target, uint
             thread_offsets_host[i] = p;
             p = cpu_point_add(p, thread_offset);
         }
-        CUDA_CHECK(cudaMemcpyToSymbolAsync(thread_offsets, thread_offsets_host,
-            BLOCK_SIZE * sizeof(CurvePoint), 0, cudaMemcpyHostToDevice, streams[1]));
-        CUDA_CHECK(cudaStreamSynchronize(streams[1]));
-        gpu_address_init<<<grid_size / BLOCK_SIZE, BLOCK_SIZE, 0, streams[0]>>>(block_offsets, offsets);
-        CUDA_CHECK(cudaStreamSynchronize(streams[0]));
-        first = false;
-    }
+        CUDA_CHECK(cudaMemcpyToSymbol(thread_offsets, thread_offsets_host, BLOCK_SIZE * sizeof(CurvePoint)));
+        gpu_address_init<<<grid_size / BLOCK_SIZE, BLOCK_SIZE>>>(block_offsets, offsets);
+        CUDA_CHECK(cudaDeviceSynchronize());
 
-cleanup:
-    cudaStreamDestroy(streams[0]);
-    cudaStreamDestroy(streams[1]);
-    cudaFreeHost(device_memory_host);
-    cudaFreeHost(thread_offsets_host);
-    cudaFree(block_offsets);
-    cudaFree(offsets);
-    return ret;
+        /* warm-up */
+        gpu_puzzle_work<<<grid_size, BLOCK_SIZE>>>(offsets);
+        CUDA_CHECK(cudaDeviceSynchronize());
+
+        uint64_t t0 = ms_now();
+        int batches = 0;
+        while (ms_now() - t0 < 2500) {
+            gpu_puzzle_work<<<grid_size, BLOCK_SIZE>>>(offsets);
+            CUDA_CHECK(cudaDeviceSynchronize());
+            base_key = cpu_add_256(base_key, key_increment);
+            batches++;
+        }
+        uint64_t t1 = ms_now();
+        double sec = (t1 - t0) / 1000.0;
+        double mps = sec > 0 ? (double)batches * (double)grid_work / sec / 1e6 : 0.0;
+        std::printf("  scale %u -> ~%.0f M/s (%d batchy)\n", s, mps, batches);
+        if (mps > best_speed) {
+            best_speed = mps;
+            best_scale = s;
+        }
+
+        cudaFreeHost(device_memory_host);
+        cudaFreeHost(thread_offsets_host);
+        cudaFree(block_offsets);
+        cudaFree(offsets);
+    }
+    std::printf("\n*** MAGIC: najlepszy work_scale=%u (~%.0f M/s) ***\n", best_scale, best_speed);
+    std::printf("Uruchom: bin\\puzzle71-cuda.exe --work-scale %u\n", best_scale);
+    std::printf("Albo:    set PUZZLE71_WORK_SCALE=%u\n\n", best_scale);
+    return 0;
 }
 
 static void print_usage() {
     std::printf(
-        "puzzle71-cuda v2 — GPU solver Bitcoin Puzzle #71 (fused hash160 + streams)\n\n"
+        "puzzle71-cuda MAGIC — GPU Puzzle #71 (fused hash + dual buffer + special kernel)\n\n"
         "Uzycie:\n"
         "  puzzle71-cuda --test\n"
         "  puzzle71-cuda --bench [sekundy]\n"
+        "  puzzle71-cuda --magic          auto-dobor work-scale (POLECAM)\n"
         "  puzzle71-cuda [opcje]\n\n"
         "Tryby szukania:\n"
         "  --mode sequential   po kolei od --start (domyslnie), zapisuje checkpoint\n"
@@ -638,6 +756,10 @@ int main(int argc, char** argv) {
             double sec = 10.0;
             if (i + 1 < argc && argv[i + 1][0] != '-') sec = std::atof(argv[i + 1]);
             return run_bench(sec, read_work_scale(argc, argv));
+        }
+        if (std::strcmp(argv[i], "--magic") == 0 || std::strcmp(argv[i], "--auto") == 0) {
+            if (!run_self_test()) return 1;
+            return run_magic_auto();
         }
         if (std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0) {
             print_usage();

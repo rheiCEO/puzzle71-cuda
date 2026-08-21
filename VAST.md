@@ -1,104 +1,70 @@
-# vast.ai — puzzle71-cuda
+# vast.ai — puzzle71-cuda RANDOM + HTML + Telegram
 
 Repo: https://github.com/rheiCEO/puzzle71-cuda
 
-## 1. Wynajmij GPU
+## 0. Wynajem
 
-1. Wejdź na https://cloud.vast.ai/create/
-2. Weź **8× RTX 5090** (~$3.20/h) albo **8× RTX 5080** (~$1.29/h) — nie 5060 Ti
-3. **Template / Image:** CUDA **devel** z `nvcc`, np.
-   - `nvidia/cuda:12.8.0-devel-ubuntu22.04`
-   - albo `nvidia/cuda:12.4.1-devel-ubuntu22.04`
-   - **NIE** sam PyTorch / runtime (bez nvcc nie skompilujesz)
-4. Disk: 32–64 GB wystarczy
-5. **Rent** → poczekaj aż status = running
-6. **Connect** / skopiuj SSH (OpenSSH)
+1. https://cloud.vast.ai/create/
+2. Image: **CUDA devel**, np. `nvidia/cuda:12.8.0-devel-ubuntu22.04` (musi być `nvcc`)
+3. Rent → Connect (SSH) / Jupyter terminal
 
-## 2. SSH i jedna komenda
+## 1. Jedna wklejka (setup + start)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rheiCEO/puzzle71-cuda/master/vast-setup.sh | bash
+
+cd /workspace/puzzle71-cuda
+
+export TELEGRAM_BOT_TOKEN='TWÓJ_TOKEN'
+export TELEGRAM_CHAT_ID='-1004333221508'
+export TELEGRAM_PROGRESS_EVERY_MLD=10000
+export WORK_SCALE=16
+
+chmod +x vast-start.sh scripts/*.sh
+bash vast-start.sh
 ```
 
-Albo ręcznie:
+To robi:
+- build CUDA
+- **losowe** szukanie na **wszystkich GPU** (`4000…` → `7fff…`)
+- HTML dashboard na porcie **8768** (ilość sprawdzonych kluczy + M/s)
+- Telegram: powitanie + **HIT** + postęp **co 10000 mld**
+- przy trafieniu: `FOUND.txt` + `logs/FOUND.txt` + wiadomość z kluczem
 
-```bash
-cd /workspace || cd /root
-git clone https://github.com/rheiCEO/puzzle71-cuda.git
-cd puzzle71-cuda
-bash scripts/build.sh
-./bin/puzzle71-cuda --test
-```
+Token ustawiasz w `export` / `telegram.env` — **nie wrzucaj go do publicznego repo**.
 
-## 3. Szukanie
+## 2. Tunel HTML
 
-**Jedna karta:**
-```bash
-./scripts/run.sh random
-```
-
-**Wszystkie 8 GPU (każda inny zakres Puzzle #71):**
-```bash
-bash scripts/run-all-gpus.sh
-tail -f logs/gpu0.log
-```
-
-**Podgląd HTML — suma wszystkich GPU (jak WATCH.bat lokalnie):**
-```bash
-# w osobnym terminalu / tmux pane:
-python3 watch_multi.py --bind 0.0.0.0 --port 8768 --no-browser
-```
-Otwórz w przeglądarce przez **Instance Portal → Tunnels → Create new tunnel**:
+Vast → **Instance Portal** → **Tunnels** → Create:
 ```
 http://localhost:8768
 ```
-Na stronie jest przycisk **Pobierz wszystkie .progress (ZIP)** — albo:
-`https://<adres-tunelu>/download/progress.zip`
+(nie Jupyter 8888)
 
-Pokazuje: łączne klucze, prędkość, pasek Puzzle #71, karty GPU i pobieranie checkpointów.
-
-**Telegram — gdy znajdzie, wyśle adres + klucz:**
-
-1. Telegram → [@BotFather](https://t.me/BotFather) → `/newbot` → skopiuj token
-2. Napisz do swojego bota dowolną wiadomość
-3. Na vast:
-```bash
-curl -s "https://api.telegram.org/botTOKEN/getUpdates"
-```
-W JSON szukaj `"chat":{"id": 123456789}` — to jest `TELEGRAM_CHAT_ID`.
-
-4. Zapisz i przetestuj (osobny terminal, GPU zostaw w spokoju):
-```bash
-cd /workspace/puzzle71-cuda
-cat > telegram.env << 'EOF'
-TELEGRAM_BOT_TOKEN=123456:ABC...
-TELEGRAM_CHAT_ID=123456789
-EOF
-python3 telegram_notify.py --test
-python3 telegram_notify.py --watch
-```
-
-`--watch` czyta `logs/gpu*.log` — **nie trzeba przebudowywać** binarki, która już liczy.
-
-Stop:
-```bash
-killall puzzle71-cuda
-```
-
-## 4. Sprawdź czy 8 kart liczy
+## 3. Podgląd w SSH
 
 ```bash
+tail -f /workspace/puzzle71-cuda/logs/gpu0.log
 nvidia-smi
 ```
 
-Każda karta powinna mieć ~100% GPU-Util i proces `puzzle71-cuda`.
-
-## 5. Zostaw w screen/tmux
+## 4. Stop
 
 ```bash
-apt-get install -y tmux
-tmux new -s p71
-bash scripts/run-all-gpus.sh
-# Ctrl+B, D  — odłącz, SSH możesz zamknąć
-# tmux attach -t p71
+killall puzzle71-cuda
+pkill -f watch_multi.py
+pkill -f telegram_notify.py
 ```
+
+## 5. Samo Telegram (test)
+
+```bash
+cd /workspace/puzzle71-cuda
+python3 telegram_notify.py --test
+```
+
+## Uwagi
+
+- Token bota trzymaj w `telegram.env` (jest w `.gitignore`) — nie commituj do publicznego repo.
+- 1× RTX ~3–4 mld kluczy/s → 10000 mld ≈ kilka godzin na 1 GPU (zależnie od karty).
+- Tryb losowy może teoretycznie powtórzyć klucz — przy przestrzeni 2^70 to praktycznie bez znaczenia.

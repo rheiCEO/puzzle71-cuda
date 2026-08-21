@@ -20,7 +20,8 @@ PORT = 8768
 PUZZLE_START = 1 << 70
 PUZZLE_END = (1 << 71) - 1
 
-SPEED_RE = re.compile(r"~(\d+)\s*M/s")
+SPEED_RE = re.compile(r"~(\d+(?:\.\d+)?)\s*M/s")
+TOTAL_MLD_RE = re.compile(r"lacznie\s+(\d+(?:\.\d+)?)\s*mld", re.I)
 
 
 def parse_kv_file(path: Path) -> dict:
@@ -47,7 +48,25 @@ def parse_log_speed(path: Path) -> int | None:
     matches = SPEED_RE.findall(text)
     if not matches:
         return None
-    return int(matches[-1]) * 1_000_000
+    return int(float(matches[-1]) * 1_000_000)
+
+
+def parse_log_total_keys(path: Path) -> int | None:
+    """Fallback z linii MAGIC: lacznie X.XX mld"""
+    if not path.exists():
+        return None
+    try:
+        with path.open("rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - 65536))
+            text = f.read().decode("utf-8", errors="ignore")
+    except OSError:
+        return None
+    matches = TOTAL_MLD_RE.findall(text)
+    if not matches:
+        return None
+    return int(float(matches[-1]) * 1_000_000_000)
 
 
 def gpu_entry(progress: Path) -> dict | None:
@@ -84,6 +103,9 @@ def gpu_entry(progress: Path) -> dict | None:
 
     log_path = progress.with_suffix(".log")
     speed = parse_log_speed(log_path)
+    log_total = parse_log_total_keys(log_path)
+    if log_total is not None and log_total > total_keys:
+        total_keys = log_total
 
     return {
         "id": name,

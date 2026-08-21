@@ -1,30 +1,32 @@
-# BTC CUDA v2 (puzzle71-cuda)
+# BTC CUDA MAGIC (puzzle71-cuda)
 
-To nie jest „nowy algorytm magiczny 10×” — to **ulepszenie tego samego CUDA pipeline** co Synapse/ETH vanity, pod BTC hash160.
+To nie jest „nowy algorytm 10×” — to **maksymalnie wyciśnięty CUDA pipeline** pod hash160 Puzzle #71.
 
-## Co zmieniło się w v2
+## Co jest w MAGIC
 
 | Zmiana | Po co |
 |--------|--------|
-| **Fused SHA256** z limbów `x` (bez bufora 33/64 B) | mniej store/load w hot path |
-| **RIPEMD160** z wordów SHA (bswap, bez bajtów) | mniej ruchu pamięci |
-| **`__constant__` K** SHA256 | szybszy dostęp do stałych |
-| **`__funnelshift`** rotacje | natywne instrukcje GPU |
-| **CUDA streams** | async kopiowanie wyników / symboli |
+| **Fused SHA256** z limbów `x` | mniej store/load w hot path |
+| **RIPEMD160** z wordów SHA | mniej ruchu pamięci |
+| **`gpu_puzzle_work`** | kernel tylko pod target hash160 (bez gałęzi score) |
+| **Wczesny exit** na pierwszym limbie | większość kluczy odpada od razu |
+| **Ping-pong offsets[2]** | work ∥ init następnego batcha (streams) |
+| **`--magic`** | auto-dobór `work-scale` pod Twoją kartę |
 
-## Czego v2 **nie** robi
+## Czego MAGIC **nie** robi
 
 - Nie omija hash160 (Puzzle #71 wymaga adresu)
 - Nie daje XPOINT (brak pubkey)
 - Nie obiecuje 10–100× na 1 karcie
 
-Realny zysk: zwykle **+10–40%** vs v1 (zależnie od GPU) — mierz `--bench 10`.
+Realny zysk vs naiwny port: zwykle **+10–40%** — mierz lokalnie.
 
 ## Build / test
 
 ```bat
 build.bat
 bin\puzzle71-cuda.exe --test
+bin\puzzle71-cuda.exe --magic
 bin\puzzle71-cuda.exe --bench 10
 ```
 

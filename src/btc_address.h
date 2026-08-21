@@ -1,9 +1,7 @@
-
 #pragma once
 #include "curve_math.h"
 #include "eth_math.h"
 #include "btc_math.h"
-
 
 __global__ void __launch_bounds__(BLOCK_SIZE) gpu_address_init(CurvePoint* block_offsets, CurvePoint* offsets) {
     bool b = __isGlobal(block_offsets);
@@ -40,6 +38,63 @@ __global__ void __launch_bounds__(BLOCK_SIZE) gpu_address_init(CurvePoint* block
     offsets[thread_id * BLOCK_SIZE] = CurvePoint{curve_x, curve_y};
 }
 
+__device__ __forceinline__ void puzzle_emit_hit(uint64_t key) {
+    uint32_t idx = atomicAdd_ul(&device_memory[0], 1);
+    if (idx < OUTPUT_BUFFER_SIZE) {
+        device_memory[2 + idx] = key;
+        device_memory[OUTPUT_BUFFER_SIZE + 2 + idx] = 1;
+        device_memory[OUTPUT_BUFFER_SIZE * 2 + 2 + idx] = 0;
+    }
+}
+
+__device__ __forceinline__ void puzzle_check(Address a, uint64_t key) {
+    /* najpierw najwazniejszy limb — wczesny exit prawie zawsze */
+    if (a.a != device_target[0]) return;
+    if (a.b != device_target[1] || a.c != device_target[2] ||
+        a.d != device_target[3] || a.e != device_target[4]) return;
+    puzzle_emit_hit(key);
+}
+
+/* MAGIC: kernel tylko pod Puzzle #71 — zero galezi score_method */
+__global__ void __launch_bounds__(BLOCK_SIZE, 4) gpu_puzzle_work(CurvePoint* offsets) {
+    bool b = __isGlobal(offsets);
+    __builtin_assume(b);
+
+    uint64_t thread_id = (uint64_t)threadIdx.x + (uint64_t)blockIdx.x * (uint64_t)BLOCK_SIZE;
+    uint64_t key = (uint64_t)THREAD_WORK * thread_id;
+
+    CurvePoint p = offsets[thread_id];
+    puzzle_check(calculate_hash160_compressed(p.x, p.y), key);
+
+    _uint256 z[THREAD_WORK - 1];
+    z[0] = sub_256_mod_p(p.x, addends[0].x);
+
+#pragma unroll 8
+    for (int i = 1; i < THREAD_WORK - 1; i++) {
+        _uint256 x_delta = sub_256_mod_p(p.x, addends[i].x);
+        z[i] = mul_256_mod_p(z[i - 1], x_delta);
+    }
+
+    _uint256 q = eeuclid_256_mod_p(z[THREAD_WORK - 2]);
+
+    for (int i = THREAD_WORK - 2; i >= 1; i--) {
+        _uint256 y = mul_256_mod_p(q, z[i - 1]);
+        q = mul_256_mod_p(q, sub_256_mod_p(p.x, addends[i].x));
+
+        _uint256 lambda = mul_256_mod_p(sub_256_mod_p(p.y, addends[i].y), y);
+        _uint256 curve_x = sub_256_mod_p(sub_256_mod_p(mul_256_mod_p(lambda, lambda), p.x), addends[i].x);
+        _uint256 curve_y = sub_256_mod_p(mul_256_mod_p(lambda, sub_256_mod_p(p.x, curve_x)), p.y);
+
+        puzzle_check(calculate_hash160_compressed(curve_x, curve_y), key + i + 1);
+    }
+
+    _uint256 y = q;
+    _uint256 lambda = mul_256_mod_p(sub_256_mod_p(p.y, addends[0].y), y);
+    _uint256 curve_x = sub_256_mod_p(sub_256_mod_p(mul_256_mod_p(lambda, lambda), p.x), addends[0].x);
+    _uint256 curve_y = sub_256_mod_p(mul_256_mod_p(lambda, sub_256_mod_p(p.x, curve_x)), p.y);
+
+    puzzle_check(calculate_hash160_compressed(curve_x, curve_y), key + 1);
+}
 
 __global__ void __launch_bounds__(BLOCK_SIZE, 2) gpu_address_work(int score_method, CurvePoint* offsets) {
     bool b = __isGlobal(offsets);

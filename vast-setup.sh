@@ -64,7 +64,11 @@ Gotowe. Test:
 1 GPU:
   ./scripts/run.sh random
 
-Wszystkie GPU (8x itd.):
+Wszystkie GPU (8x itd.) — sequential kawalki:
   ./scripts/run-all-gpus.sh
+
+Wszystkie GPU — RANDOM caly zakres + HTML + Telegram:
+  export TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...
+  bash vast-start.sh
 --------------------------------------------
 EOF

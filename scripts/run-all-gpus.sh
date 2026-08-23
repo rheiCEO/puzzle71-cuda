@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Odpal 1 proces na kazde GPU — rozne zakresy, bez nakladania.
-# Puzzle #71: 2^70 .. 2^71-1  dzielone na N GPU.
+# Puzzle #71 prefiks 63: 0x6300..00 .. 0x63ff..ff  dzielone na N GPU.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="${BIN:-$ROOT/bin/puzzle71-cuda}"
@@ -18,24 +18,22 @@ if [[ "$N" -lt 1 ]]; then
   exit 1
 fi
 
-echo "==> $N GPU — start (zakresy 1/$N Puzzle #71)"
+echo "==> $N GPU — start (prefiks 63, zakresy 1/$N)"
 echo "    logi: $ROOT/logs/gpu*.log"
 echo "    podglad HTML:  python watch_multi.py --bind 0.0.0.0 --port 8768"
 echo "    stop:  killall puzzle71-cuda"
 echo
 
-# start = 2^70, kawalek = 2^70 / N
-# hex start GPU i: 4 + i*(8/N)  na 17 hex digits po "4"?
-# 2^70 = 0x40000000000000000
-# chunk = 2^70 / N
+# Prefiks klucza 0x63 — podzakres Puzzle #71 (2^64 kluczy)
+# chunk = 2^64 / N
 
 python3 - "$N" "$BIN" "$ROOT" <<'PY'
 import os, subprocess, sys
 n = int(sys.argv[1])
 bin_path = sys.argv[2]
 root = sys.argv[3]
-start = 1 << 70
-end = (1 << 71) - 1
+start = 0x630000000000000000
+end = 0x63FFFFFFFFFFFFFFFF
 span = end - start + 1
 chunk = span // n
 scale = os.environ.get("WORK_SCALE", "16")

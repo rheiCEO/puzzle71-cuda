@@ -730,8 +730,8 @@ static void print_usage() {
         "  --start HEX  --end HEX  --target HASH160_HEX\n"
         "  --checkpoint PLIK     domyslnie: puzzle71.progress\n"
         "  --work-scale N        10-20, domyslnie 16\n\n"
-        "Domyslnie Puzzle #71:\n"
-        "  start=40000000000000000  end=7ffffffffffffffff\n"
+        "Domyslnie Puzzle #71 (prefiks klucza 63):\n"
+        "  start=630000000000000000  end=63ffffffffffffffff\n"
         "  target=f6f5431d25bbf7b12e8add9af5e3475c44a0a5b8\n"
     );
 }
@@ -767,8 +767,8 @@ int main(int argc, char** argv) {
         }
     }
 
-    const char* start_hex = "40000000000000000";
-    const char* end_hex = "7ffffffffffffffff";
+    const char* start_hex = "630000000000000000";
+    const char* end_hex = "63ffffffffffffffff";
     const char* target_hex = "f6f5431d25bbf7b12e8add9af5e3475c44a0a5b8";
     const char* checkpoint_path = DEFAULT_CHECKPOINT;
     SearchMode mode = SearchMode::Sequential;

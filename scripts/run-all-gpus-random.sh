@@ -18,10 +18,10 @@ if [[ "$N" -lt 1 ]]; then
 fi
 
 SCALE="${WORK_SCALE:-16}"
-START="${START_HEX:-40000000000000000}"
-END="${END_HEX:-7ffffffffffffffff}"
+START="${START_HEX:-630000000000000000}"
+END="${END_HEX:-63ffffffffffffffff}"
 
-echo "==> $N GPU — RANDOM Puzzle #71"
+echo "==> $N GPU — RANDOM Puzzle #71 (prefiks 63)"
 echo "    zakres: $START .. $END"
 echo "    work_scale=$SCALE"
 echo "    logi: $ROOT/logs/gpu*.log"

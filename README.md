@@ -6,8 +6,10 @@ GPU solver for **Bitcoin Puzzle #71** — fork architektury [eth-vanity-cuda](ht
 
 | Parametr | Wartość |
 |----------|---------|
-| Start | `40000000000000000` (2⁷⁰) |
-| End | `7ffffffffffffffff` (2⁷¹−1) |
+| Prefiks klucza | **`63`** (hex) |
+| Start | `630000000000000000` |
+| End | `63ffffffffffffffff` |
+| Przestrzeń | 2⁶⁴ kluczy (64× mniej niż pełne Puzzle #71) |
 | Adres | `1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU` |
 | Hash160 | `f6f5431d25bbf7b12e8add9af5e3475c44a0a5b8` |
 
@@ -40,8 +42,8 @@ bash scripts/build.sh
 | Wznowienie | `--resume` | Kontynuacja sekwencyjna od ostatniego checkpointu |
 
 ```bat
-bin\puzzle71-cuda.exe --mode sequential
-bin\puzzle71-cuda.exe --mode random --start 40000000000000000 --end 7ffffffffffffffff
+bin\puzzle71-cuda.exe --mode sequential --start 630000000000000000 --end 63ffffffffffffffff
+bin\puzzle71-cuda.exe --mode random --start 630000000000000000 --end 63ffffffffffffffff
 bin\puzzle71-cuda.exe --resume
 bin\puzzle71-cuda.exe --checkpoint moj.postep --resume
 ```

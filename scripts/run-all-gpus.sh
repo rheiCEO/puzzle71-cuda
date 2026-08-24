@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Odpal 1 proces na kazde GPU — rozne zakresy, bez nakladania.
-# Puzzle #71 prefiks 63: 0x6300..00 .. 0x63ff..ff  dzielone na N GPU.
+# Domyślnie prefiks 63; nadpisz START_HEX / END_HEX (np. okno wokół wskazówki).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="${BIN:-$ROOT/bin/puzzle71-cuda}"
@@ -18,28 +18,34 @@ if [[ "$N" -lt 1 ]]; then
   exit 1
 fi
 
-echo "==> $N GPU — start (prefiks 63, zakresy 1/$N)"
+START="${START_HEX:-630000000000000000}"
+END="${END_HEX:-63ffffffffffffffff}"
+
+echo "==> $N GPU — SEQUENTIAL split"
+echo "    zakres: $START .. $END"
 echo "    logi: $ROOT/logs/gpu*.log"
 echo "    podglad HTML:  python watch_multi.py --bind 0.0.0.0 --port 8768"
 echo "    stop:  killall puzzle71-cuda"
 echo
 
-# Prefiks klucza 0x63 — podzakres Puzzle #71 (2^64 kluczy)
-# chunk = 2^64 / N
+pkill -f "$BIN" 2>/dev/null || true
+sleep 1
 
-python3 - "$N" "$BIN" "$ROOT" <<'PY'
+python3 - "$N" "$BIN" "$ROOT" "$START" "$END" <<'PY'
 import os, subprocess, sys
 n = int(sys.argv[1])
 bin_path = sys.argv[2]
 root = sys.argv[3]
-start = 0x630000000000000000
-end = 0x63FFFFFFFFFFFFFFFF
+start = int(sys.argv[4], 16)
+end = int(sys.argv[5], 16)
 span = end - start + 1
-chunk = span // n
+chunk = max(span // n, 1)
 scale = os.environ.get("WORK_SCALE", "16")
 for i in range(n):
     s = start + i * chunk
     e = start + (i + 1) * chunk - 1 if i < n - 1 else end
+    if s > end:
+        break
     log = os.path.join(root, "logs", f"gpu{i}.log")
     ckpt = os.path.join(root, "logs", f"gpu{i}.progress")
     cmd = [

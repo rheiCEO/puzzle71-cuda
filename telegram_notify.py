@@ -210,7 +210,7 @@ def cmd_test() -> None:
     telegram_send(
         "🟢 puzzle71-cuda ONLINE\n\n"
         "Szukanie losowe Puzzle #71\n"
-        "zakres: 6300… → 63ff… (prefiks 63)\n"
+        "zakres: 7400… → 74ff… (prefiks 74)\n"
         f"Alerty: HIT + co {PROGRESS_EVERY // 1_000_000_000} mld kluczy\n"
         "— Telegram OK"
     )
@@ -295,7 +295,7 @@ def cmd_watch(logs_dir: Path) -> None:
                     f"Sprawdzono: {fmt_keys(total)}\n"
                     f"Kamień milowy: {milestone // 1_000_000_000} mld"
                     f"{spd}\n"
-                    f"Tryb: losowy 6300…→63ff…"
+                    f"Tryb: losowy 7400…→74ff…"
                 )
                 try:
                     telegram_send(msg)

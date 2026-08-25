@@ -2,6 +2,7 @@
 #include "curve_math.h"
 #include "eth_math.h"
 #include "btc_math.h"
+#include "snapshot_lookup.cuh"
 
 __global__ void __launch_bounds__(BLOCK_SIZE) gpu_address_init(CurvePoint* block_offsets, CurvePoint* offsets) {
     bool b = __isGlobal(block_offsets);
@@ -94,6 +95,53 @@ __global__ void __launch_bounds__(BLOCK_SIZE, 4) gpu_puzzle_work(CurvePoint* off
     _uint256 curve_y = sub_256_mod_p(mul_256_mod_p(lambda, sub_256_mod_p(p.x, curve_x)), p.y);
 
     puzzle_check(calculate_hash160_compressed(curve_x, curve_y), key + 1);
+}
+
+__device__ __forceinline__ void snapshot_check(Address a, uint64_t key, const Address* table, uint64_t n) {
+    if (!snapshot_contains(a, table, n)) return;
+    puzzle_emit_hit(key);
+}
+
+/* Skan vs migawka hash160 w VRAM (binary search ~26 krokow) */
+__global__ void __launch_bounds__(BLOCK_SIZE, 4) gpu_snapshot_work(
+    CurvePoint* offsets, const Address* snapshot, uint64_t snapshot_count) {
+    bool b = __isGlobal(offsets);
+    __builtin_assume(b);
+
+    uint64_t thread_id = (uint64_t)threadIdx.x + (uint64_t)blockIdx.x * (uint64_t)BLOCK_SIZE;
+    uint64_t key = (uint64_t)THREAD_WORK * thread_id;
+
+    CurvePoint p = offsets[thread_id];
+    snapshot_check(calculate_hash160_compressed(p.x, p.y), key, snapshot, snapshot_count);
+
+    _uint256 z[THREAD_WORK - 1];
+    z[0] = sub_256_mod_p(p.x, addends[0].x);
+
+#pragma unroll 8
+    for (int i = 1; i < THREAD_WORK - 1; i++) {
+        _uint256 x_delta = sub_256_mod_p(p.x, addends[i].x);
+        z[i] = mul_256_mod_p(z[i - 1], x_delta);
+    }
+
+    _uint256 q = eeuclid_256_mod_p(z[THREAD_WORK - 2]);
+
+    for (int i = THREAD_WORK - 2; i >= 1; i--) {
+        _uint256 y = mul_256_mod_p(q, z[i - 1]);
+        q = mul_256_mod_p(q, sub_256_mod_p(p.x, addends[i].x));
+
+        _uint256 lambda = mul_256_mod_p(sub_256_mod_p(p.y, addends[i].y), y);
+        _uint256 curve_x = sub_256_mod_p(sub_256_mod_p(mul_256_mod_p(lambda, lambda), p.x), addends[i].x);
+        _uint256 curve_y = sub_256_mod_p(mul_256_mod_p(lambda, sub_256_mod_p(p.x, curve_x)), p.y);
+
+        snapshot_check(calculate_hash160_compressed(curve_x, curve_y), key + i + 1, snapshot, snapshot_count);
+    }
+
+    _uint256 y = q;
+    _uint256 lambda = mul_256_mod_p(sub_256_mod_p(p.y, addends[0].y), y);
+    _uint256 curve_x = sub_256_mod_p(sub_256_mod_p(mul_256_mod_p(lambda, lambda), p.x), addends[0].x);
+    _uint256 curve_y = sub_256_mod_p(mul_256_mod_p(lambda, sub_256_mod_p(p.x, curve_x)), p.y);
+
+    snapshot_check(calculate_hash160_compressed(curve_x, curve_y), key + 1, snapshot, snapshot_count);
 }
 
 __global__ void __launch_bounds__(BLOCK_SIZE, 2) gpu_address_work(int score_method, CurvePoint* offsets) {

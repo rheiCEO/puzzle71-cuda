@@ -17,9 +17,9 @@ ROOT = Path(__file__).resolve().parent
 HTML = ROOT / "dashboard_multi.html"
 DEFAULT_LOGS = ROOT / "logs"
 PORT = 8768
-# Prefiks klucza 0x63 — podzakres Puzzle #71 (2^64 kluczy, 64× mniejszy niż pełne 2^70)
-PUZZLE_START = 0x630000000000000000
-PUZZLE_END = 0x63FFFFFFFFFFFFFFFF
+# Prefiks klucza 0x74 — podzakres Puzzle #71 (2^64 kluczy, 64× mniejszy niż pełne 2^70)
+PUZZLE_START = 0x740000000000000000
+PUZZLE_END = 0x74ffffffffffffffff
 
 SPEED_RE = re.compile(r"~(\d+(?:\.\d+)?)\s*M/s")
 TOTAL_MLD_RE = re.compile(r"lacznie\s+(\d+(?:\.\d+)?)\s*mld", re.I)

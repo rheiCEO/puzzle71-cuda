@@ -7,8 +7,8 @@ Uruchomienie:
   python server.py --host 0.0.0.0 --port 8765
 
 Zmienne:
-  PUZZLE71_RANGE_START  hex (domyślnie prefiks 63: 0x6300…00)
-  PUZZLE71_RANGE_END    hex (domyślnie prefiks 63: 0x63ff…ff)
+  PUZZLE71_RANGE_START  hex (domyślnie prefiks 74: 0x7400…00)
+  PUZZLE71_RANGE_END    hex (domyślnie prefiks 74: 0x74ff…ff)
   PUZZLE71_CHUNK_BITS   rozmiar przydzielanego bloku (domyślnie 38)
 """
 from __future__ import annotations
@@ -24,8 +24,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 DB_PATH = Path(__file__).with_name("coop.db")
-RANGE_START = int(os.environ.get("PUZZLE71_RANGE_START", "0x630000000000000000"), 16)
-RANGE_END = int(os.environ.get("PUZZLE71_RANGE_END", "0x63ffffffffffffffff"), 16)
+RANGE_START = int(os.environ.get("PUZZLE71_RANGE_START", "0x740000000000000000"), 16)
+RANGE_END = int(os.environ.get("PUZZLE71_RANGE_END", "0x74ffffffffffffffff"), 16)
 CHUNK_BITS = int(os.environ.get("PUZZLE71_CHUNK_BITS", "38"))
 TARGET_H160 = "f6f5431d25bbf7b12e8add9af5e3475c44a0a5b8"
 PUZZLE_ADDR = "1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU"

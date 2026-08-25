@@ -391,7 +391,9 @@ static int run_bench(double seconds, uint32_t work_scale) {
 }
 
 static int run_search(_uint256 start_key, _uint256 end_key, Address target, uint32_t work_scale,
-    SearchMode mode, const char* checkpoint_path, bool resume) {
+    SearchMode mode, const char* checkpoint_path, bool resume,
+    Address* d_snapshot = nullptr, uint64_t snapshot_count = 0) {
+    const bool snapshot_mode = (d_snapshot != nullptr && snapshot_count > 0);
     CUDA_CHECK(cudaSetDevice(0));
 
     uint64_t total_keys = 0;
@@ -498,8 +500,13 @@ static int run_search(_uint256 start_key, _uint256 end_key, Address target, uint
     format_address_hex(target, target_hex, sizeof(target_hex));
     format_uint256_hex(range_start, rs, sizeof(rs));
     format_uint256_hex(end_key, re, sizeof(re));
-    std::fprintf(stderr, "MAGIC: tryb=%s | %s..%s | target %s\n",
-        mode == SearchMode::Random ? "losowy" : "sekwencyjny", rs, re, target_hex);
+    std::fprintf(stderr, "MAGIC: tryb=%s | %s..%s",
+        mode == SearchMode::Random ? "losowy" : "sekwencyjny", rs, re);
+    if (snapshot_mode)
+        std::fprintf(stderr, " | SNAPSHOT %llu hash160 VRAM", (unsigned long long)snapshot_count);
+    else
+        std::fprintf(stderr, " | target %s", target_hex);
+    std::fprintf(stderr, "\n");
     if (mode == SearchMode::Sequential && !resume)
         std::fprintf(stderr, "MAGIC: checkpoint %s | specialized kernel + dual buffer\n", checkpoint_path);
 
@@ -521,7 +528,10 @@ static int run_search(_uint256 start_key, _uint256 end_key, Address target, uint
     have_work = true;
 
     while (have_work) {
-        gpu_puzzle_work<<<grid_size, BLOCK_SIZE, 0, stream_work>>>(offsets[cur]);
+        if (snapshot_mode)
+            gpu_snapshot_work<<<grid_size, BLOCK_SIZE, 0, stream_work>>>(offsets[cur], d_snapshot, snapshot_count);
+        else
+            gpu_puzzle_work<<<grid_size, BLOCK_SIZE, 0, stream_work>>>(offsets[cur]);
 
         /* nastepny klucz + init do drugiego bufora ROWNIEGLE z work */
         bool scheduled_next = false;
@@ -570,20 +580,20 @@ static int run_search(_uint256 start_key, _uint256 end_key, Address target, uint
                             (uint32_t)(k_offset >> 32), (uint32_t)(k_offset & 0xFFFFFFFF)}));
                 CurvePoint cp = cpu_point_multiply(G, k);
                 Address addr = cpu_calculate_hash160_compressed(cp.x, cp.y);
-                if (!address_eq(addr, target)) continue;
+                if (!snapshot_mode && !address_eq(addr, target)) continue;
                 char pk[128], ah[64];
                 format_uint256_hex(k, pk, sizeof(pk));
                 format_address_hex(addr, ah, sizeof(ah));
-                std::printf("\n*** ZNALEZIONO ***\nAdres: 1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU\nKlucz: %s\nHash160: %s\n", pk, ah);
+                std::printf("\n*** HIT — adres z migawki (funded) ***\nKlucz: %s\nHash160: %s\n", pk, ah);
                 std::fflush(stdout);
                 FILE* ff = std::fopen("FOUND.txt", "w");
                 if (ff) {
-                    std::fprintf(ff, "*** ZNALEZIONO ***\nAdres: 1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU\nKlucz: %s\nHash160: %s\n", pk, ah);
+                    std::fprintf(ff, "*** HIT ***\nKlucz: %s\nHash160: %s\n", pk, ah);
                     std::fclose(ff);
                 }
                 FILE* lf = std::fopen("logs/FOUND.txt", "w");
                 if (lf) {
-                    std::fprintf(lf, "*** ZNALEZIONO ***\nAdres: 1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU\nKlucz: %s\nHash160: %s\n", pk, ah);
+                    std::fprintf(lf, "*** HIT ***\nKlucz: %s\nHash160: %s\n", pk, ah);
                     std::fclose(lf);
                 }
                 ret = 0;
@@ -617,6 +627,51 @@ cleanup:
     cudaFree(offsets[0]);
     cudaFree(offsets[1]);
     return ret;
+}
+
+static Address* load_snapshot_gpu(const char* path, uint64_t* out_count) {
+    FILE* f = std::fopen(path, "rb");
+    if (!f) {
+        std::fprintf(stderr, "BLAD: nie mozna otworzyc snapshot: %s\n", path);
+        return nullptr;
+    }
+    std::fseek(f, 0, SEEK_END);
+    long sz = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+    if (sz <= 0 || (sz % 20) != 0) {
+        std::fprintf(stderr, "BLAD: zly rozmiar snapshot (%%20): %ld bajtow\n", sz);
+        std::fclose(f);
+        return nullptr;
+    }
+    uint64_t count = (uint64_t)sz / 20ULL;
+    uint8_t* raw = new uint8_t[sz];
+    if (std::fread(raw, 1, (size_t)sz, f) != (size_t)sz) {
+        std::fprintf(stderr, "BLAD: odczyt snapshot\n");
+        delete[] raw;
+        std::fclose(f);
+        return nullptr;
+    }
+    std::fclose(f);
+
+    Address* host = new Address[count];
+    for (uint64_t i = 0; i < count; i++)
+        host[i] = host_bytes20_to_address(raw + i * 20);
+    delete[] raw;
+
+    Address* d = nullptr;
+    cudaError_t e = cudaMalloc(&d, count * sizeof(Address));
+    if (e != cudaSuccess) {
+        std::fprintf(stderr, "BLAD cudaMalloc snapshot: %s\n", cudaGetErrorString(e));
+        delete[] host;
+        return nullptr;
+    }
+    cudaMemcpy(d, host, count * sizeof(Address), cudaMemcpyHostToDevice);
+    delete[] host;
+
+    *out_count = count;
+    std::fprintf(stderr, "Snapshot VRAM OK: %llu hash160 (%.1f MB)\n",
+        (unsigned long long)count, (double)sz / (1024.0 * 1024.0));
+    return d;
 }
 
 static int run_magic_auto() {
@@ -729,9 +784,11 @@ static void print_usage() {
         "Opcje:\n"
         "  --start HEX  --end HEX  --target HASH160_HEX\n"
         "  --checkpoint PLIK     domyslnie: puzzle71.progress\n"
-        "  --work-scale N        10-20, domyslnie 16\n\n"
-        "Domyslnie Puzzle #71 (prefiks klucza 63):\n"
-        "  start=630000000000000000  end=63ffffffffffffffff\n"
+        "  --work-scale N        10-20, domyslnie 16\n"
+        "  --snapshot PLIK.bin   migawka hash160 (20 B/adres, posortowana) -> VRAM\n"
+        "                        generuj: py -3 export_snapshot_hash160.py\n\n"
+        "Domyslnie Puzzle #71 (prefiks klucza 74):\n"
+        "  start=740000000000000000  end=74ffffffffffffffff\n"
         "  target=f6f5431d25bbf7b12e8add9af5e3475c44a0a5b8\n"
     );
 }
@@ -767,10 +824,11 @@ int main(int argc, char** argv) {
         }
     }
 
-    const char* start_hex = "630000000000000000";
-    const char* end_hex = "63ffffffffffffffff";
+    const char* start_hex = "740000000000000000";
+    const char* end_hex = "74ffffffffffffffff";
     const char* target_hex = "f6f5431d25bbf7b12e8add9af5e3475c44a0a5b8";
     const char* checkpoint_path = DEFAULT_CHECKPOINT;
+    const char* snapshot_path = nullptr;
     SearchMode mode = SearchMode::Sequential;
     bool resume = false;
 
@@ -779,6 +837,7 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--end") == 0 && i + 1 < argc) end_hex = argv[++i];
         else if (std::strcmp(argv[i], "--target") == 0 && i + 1 < argc) target_hex = argv[++i];
         else if (std::strcmp(argv[i], "--checkpoint") == 0 && i + 1 < argc) checkpoint_path = argv[++i];
+        else if (std::strcmp(argv[i], "--snapshot") == 0 && i + 1 < argc) snapshot_path = argv[++i];
         else if (std::strcmp(argv[i], "--resume") == 0) resume = true;
         else if (std::strcmp(argv[i], "--mode") == 0 && i + 1 < argc) {
             const char* m = argv[++i];
@@ -799,6 +858,19 @@ int main(int argc, char** argv) {
     _uint256 end = parse_hex_uint256(end_hex);
     Address target = parse_hash160_hex(target_hex);
 
-    return run_search(start, end, target, read_work_scale(argc, argv),
-        mode, checkpoint_path, resume);
+    Address* d_snapshot = nullptr;
+    uint64_t snapshot_count = 0;
+    if (snapshot_path) {
+        d_snapshot = load_snapshot_gpu(snapshot_path, &snapshot_count);
+        if (!d_snapshot) return 1;
+        if (mode == SearchMode::Sequential && !resume)
+            mode = SearchMode::Random; /* snapshot: domyslnie losowo w calym zakresie kluczy */
+        std::fprintf(stderr, "Tryb SNAPSHOT: szukam kluczy z saldem > 0 na migawce\n");
+    }
+
+    int ret = run_search(start, end, target, read_work_scale(argc, argv),
+        mode, checkpoint_path, resume, d_snapshot, snapshot_count);
+
+    if (d_snapshot) cudaFree(d_snapshot);
+    return ret;
 }

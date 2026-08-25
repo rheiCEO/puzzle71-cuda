@@ -29,8 +29,8 @@ if [[ ! -f "$ROOT/telegram.env" ]]; then
 fi
 
 echo "============================================"
-echo "  puzzle71-cuda vast — RANDOM START (prefiks 63)"
-echo "  zakres: 6300… → 63ff…"
+echo "  puzzle71-cuda vast — RANDOM START (prefiks 74)"
+echo "  zakres: 7400… → 74ff…"
 echo "  work_scale=$WORK_SCALE"
 echo "  dashboard port=$WATCH_PORT"
 echo "  telegram co ${TELEGRAM_PROGRESS_EVERY_MLD} mld"
@@ -59,8 +59,8 @@ fi
 
 # GPU random
 chmod +x "$ROOT/scripts/"*.sh "$ROOT/cloudflare-tunnel.sh" 2>/dev/null || true
-export START_HEX="${START_HEX:-630000000000000000}"
-export END_HEX="${END_HEX:-63ffffffffffffffff}"
+export START_HEX="${START_HEX:-740000000000000000}"
+export END_HEX="${END_HEX:-74ffffffffffffffff}"
 WORK_SCALE="$WORK_SCALE" bash "$ROOT/scripts/run-all-gpus-random.sh"
 
 # Cloudflare quick tunnel (publiczny URL) — jak przy ETH

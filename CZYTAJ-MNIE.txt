@@ -21,12 +21,12 @@ JAK URUCHOMIC
   1. Rozpakuj caly folder np. na Pulpit
   2. Kliknij 2x:  SZUKAJ.bat     — szukanie po kolei (zapisuje postep)
   3. Albo:         WZNAWIJ.bat   — kontynuacja po przerwaniu
-  4. Albo:         LOSOWO.bat    — losowo w zakresie prefiks 63
+  4. Albo:         LOSOWO.bat    — losowo w zakresie prefiks 74
 
 Okno cmd pokaze predkosc (mln/s) i postep.
 
-Prefiks klucza: 63 (hex)
-Zakres: 630000000000000000 .. 63ffffffffffffffff  (2^64 kluczy)
+Prefiks klucza: 74 (hex)
+Zakres: 740000000000000000 .. 74ffffffffffffffff  (2^64 kluczy)
 
 ================================================================================
 POSTEP / CHECKPOINT
@@ -42,7 +42,7 @@ CEL
 ================================================================================
 
   Adres:   1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU
-  Puzzle:  Bitcoin #71  (prefiks klucza 63, 2^64 kluczy)
+  Puzzle:  Bitcoin #71  (prefiks klucza 74, 2^64 kluczy)
 
   Przy trafieniu w oknie pojawi sie:
     *** ZNALEZIONO ***

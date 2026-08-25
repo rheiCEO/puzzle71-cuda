@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Odpal 1 proces na kazde GPU — rozne zakresy, bez nakladania.
-# Domyślnie prefiks 63; nadpisz START_HEX / END_HEX (np. okno wokół wskazówki).
+# Domyślnie prefiks 74; nadpisz START_HEX / END_HEX (np. okno wokół wskazówki).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="${BIN:-$ROOT/bin/puzzle71-cuda}"
@@ -18,8 +18,8 @@ if [[ "$N" -lt 1 ]]; then
   exit 1
 fi
 
-START="${START_HEX:-630000000000000000}"
-END="${END_HEX:-63ffffffffffffffff}"
+START="${START_HEX:-740000000000000000}"
+END="${END_HEX:-74ffffffffffffffff}"
 
 echo "==> $N GPU — SEQUENTIAL split"
 echo "    zakres: $START .. $END"

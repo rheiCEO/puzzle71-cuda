@@ -1,4 +1,4 @@
-# Lokalny start: multi-GPU random (prefiks 63) + dashboard + Telegram
+# Lokalny start: multi-GPU random (prefiks 74) + dashboard + Telegram
 # Użycie: .\local-start.ps1
 # Wymaga: bin\puzzle71-cuda.exe (build.bat) lub bin\puzzle71-cuda (Linux)
 
@@ -6,8 +6,8 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $Root
 
-$env:START_HEX = if ($env:START_HEX) { $env:START_HEX } else { "630000000000000000" }
-$env:END_HEX   = if ($env:END_HEX)   { $env:END_HEX }   else { "63ffffffffffffffff" }
+$env:START_HEX = if ($env:START_HEX) { $env:START_HEX } else { "740000000000000000" }
+$env:END_HEX   = if ($env:END_HEX)   { $env:END_HEX }   else { "74ffffffffffffffff" }
 $env:WORK_SCALE = if ($env:WORK_SCALE) { $env:WORK_SCALE } else { "16" }
 $env:TELEGRAM_PROGRESS_EVERY_MLD = if ($env:TELEGRAM_PROGRESS_EVERY_MLD) { $env:TELEGRAM_PROGRESS_EVERY_MLD } else { "10000" }
 $WatchPort = if ($env:WATCH_PORT) { $env:WATCH_PORT } else { "8768" }
@@ -23,7 +23,7 @@ if (-not (Test-Path "$Root\telegram.env")) {
     Write-Host "UWAGA: brak telegram.env — skopiuj z telegram.env.example"
 }
 
-Write-Host "==> puzzle71-cuda LOCAL — prefiks 63"
+Write-Host "==> puzzle71-cuda LOCAL — prefiks 74"
 Write-Host "    zakres: $($env:START_HEX) .. $($env:END_HEX)"
 
 # Dashboard

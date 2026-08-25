@@ -1,9 +1,9 @@
-# vast.ai — puzzle71-cuda RANDOM + HTML + Telegram (prefiks **63**)
+# vast.ai — puzzle71-cuda RANDOM + HTML + Telegram (prefiks **74**)
 
 Repo: https://github.com/rheiCEO/puzzle71-cuda
 
-**Zakres:** `630000000000000000` … `63ffffffffffffffff`  
-(pełny hex256: `…000000000000000000000000000000000000000000000630000000000000000`)
+**Zakres:** `740000000000000000` … `74ffffffffffffffff`  
+(pełny hex256: `…000000000000000000000000000000000000000000000740000000000000000`)
 
 ## 0. Wynajem
 
@@ -29,7 +29,7 @@ bash vast-start.sh
 
 To robi:
 - build CUDA
-- **losowe** szukanie na **wszystkich GPU** (`6300…` → `63ff…`)
+- **losowe** szukanie na **wszystkich GPU** (`7400…` → `74ff…`)
 - HTML dashboard na porcie **8768** (ilość sprawdzonych kluczy + M/s)
 - Telegram: powitanie + **HIT** + postęp **co 10000 mld**
 - przy trafieniu: `FOUND.txt` + `logs/FOUND.txt` + wiadomość z kluczem
@@ -84,4 +84,4 @@ python3 telegram_notify.py --test
 
 - Token bota trzymaj w `telegram.env` (jest w `.gitignore`) — nie commituj do publicznego repo.
 - 1× RTX ~3–4 mld kluczy/s → 10000 mld ≈ kilka godzin na 1 GPU (zależnie od karty).
-- Tryb losowy może teoretycznie powtórzyć klucz — przy prefiksie 63 (2^64) to praktycznie bez znaczenia.
+- Tryb losowy może teoretycznie powtórzyć klucz — przy prefiksie 74 (2^64) to praktycznie bez znaczenia.

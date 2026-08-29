@@ -14,9 +14,9 @@ if not exist "bin\puzzle71-cuda.exe" (
 
 )
 
-set START=740000000000000000
+set START=400000000000000000
 
-set END=74ffffffffffffffff
+set END=7fffffffffffffffff
 
 echo.
 
